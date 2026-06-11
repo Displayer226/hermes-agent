@@ -192,7 +192,24 @@ def _log_exit(reason: str) -> None:
     print(f"[gateway-exit] {reason}", file=sys.stderr, flush=True)
 
 
-def wait_for_mcp_discovery(timeout: float = 0.75) -> None:
+def _mcp_discovery_timeout() -> float:
+    """Return the MCP discovery wait timeout in seconds.
+
+    Default is 3s — enough for remote/slow MCP servers (e.g. SillyTavern
+    session proxy waiting for a browser websocket) to connect before the
+    agent snapshots its tool list.  Override via
+    ``HERMES_TUI_MCP_DISCOVERY_TIMEOUT_S`` for finer control.
+    """
+    try:
+        raw = (os.environ.get("HERMES_TUI_MCP_DISCOVERY_TIMEOUT_S") or "").strip()
+        if raw:
+            return max(0.1, float(raw))
+    except (ValueError, TypeError):
+        pass
+    return 3.0
+
+
+def wait_for_mcp_discovery(timeout: float | None = None) -> None:
     """Briefly block until background MCP discovery finishes, up to ``timeout``.
 
     MCP discovery runs in a daemon thread spawned at startup (see main()) so a
@@ -203,7 +220,12 @@ def wait_for_mcp_discovery(timeout: float = 0.75) -> None:
     before the first agent build lets already-spawning fast servers land
     without re-introducing the startup hang: a dead server simply isn't waited
     on beyond ``timeout``.  No-op when no discovery thread was started.
+
+    The default timeout is controlled by ``HERMES_TUI_MCP_DISCOVERY_TIMEOUT_S``
+    (default 3s).  Pass an explicit ``timeout`` value to override.
     """
+    if timeout is None:
+        timeout = _mcp_discovery_timeout()
     thread = _mcp_discovery_thread
     if thread is None or not thread.is_alive():
         return

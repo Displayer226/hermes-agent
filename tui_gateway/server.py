@@ -3077,6 +3077,10 @@ def _make_agent(
     # for in-flight discovery to land before building — bounded, so a slow/dead
     # server still can't block.  No-op once discovery has finished (every build
     # after the first during a slow startup).
+    #
+    # Default timeout is 3s.  Override with HERMES_TUI_MCP_DISCOVERY_TIMEOUT_S
+    # when a remote/slow MCP server (e.g. SillyTavern session proxy) needs more
+    # headroom to connect before the agent snapshots its tool list.
     try:
         from tui_gateway.entry import wait_for_mcp_discovery
 
@@ -5028,10 +5032,58 @@ def _(rid, params: dict) -> dict:
 # ── Methods: prompt ──────────────────────────────────────────────────
 
 
+def _prompt_submit_system_context(params: dict) -> str | None:
+    value = (
+        params.get("system_context")
+        or params.get("ephemeral_system_prompt")
+        or params.get("system_message")
+    )
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _prompt_submit_conversation_history(params: dict) -> tuple[list[dict[str, Any]] | None, str | None]:
+    if "conversation_history" not in params and "messages" not in params:
+        return None, None
+    raw_history = params.get("conversation_history", params.get("messages"))
+    if raw_history is None:
+        return [], None
+    if not isinstance(raw_history, list):
+        return None, "conversation_history must be a list"
+
+    history: list[dict[str, Any]] = []
+    for index, message in enumerate(raw_history):
+        if not isinstance(message, dict):
+            return None, f"conversation_history[{index}] must be an object"
+        role = str(message.get("role") or "").strip().lower()
+        if role in {"system", "developer"}:
+            continue
+        if role not in {"user", "assistant", "tool"}:
+            return None, f"conversation_history[{index}].role is not supported: {role or '<empty>'}"
+        clean_message: dict[str, Any] = {"role": role}
+        if "content" in message:
+            clean_message["content"] = message.get("content")
+        elif "text" in message:
+            clean_message["content"] = message.get("text")
+        else:
+            clean_message["content"] = ""
+        for key in ("tool_calls", "tool_call_id", "name"):
+            if key in message:
+                clean_message[key] = copy.deepcopy(message[key])
+        history.append(clean_message)
+    return history, None
+
+
 @method("prompt.submit")
 def _(rid, params: dict) -> dict:
     sid, text = params.get("session_id", ""), params.get("text", "")
     truncate_user_ordinal = params.get("truncate_before_user_ordinal")
+    system_context = _prompt_submit_system_context(params)
+    replacement_history, replacement_error = _prompt_submit_conversation_history(params)
+    if replacement_error:
+        return _err(rid, 4004, replacement_error)
     session, err = _sess_nowait(params, rid)
     if err:
         return err
@@ -5043,6 +5095,17 @@ def _(rid, params: dict) -> dict:
     with session["history_lock"]:
         if session.get("running"):
             return _err(rid, 4009, "session busy")
+        if replacement_history is not None:
+            session["history"] = list(replacement_history)
+            session["history_version"] = int(session.get("history_version", 0)) + 1
+            agent = session.get("agent")
+            if agent is not None and hasattr(agent, "_last_flushed_db_idx"):
+                agent._last_flushed_db_idx = len(replacement_history)
+            if (db := _get_db()) is not None:
+                try:
+                    db.replace_messages(session["session_key"], replacement_history)
+                except Exception as exc:
+                    print(f"[tui_gateway] prompt.submit: replace_messages failed: {exc}", file=sys.stderr)
         if truncate_user_ordinal is not None:
             try:
                 ordinal = int(truncate_user_ordinal)
@@ -5084,7 +5147,7 @@ def _(rid, params: dict) -> dict:
                 session["running"] = False
                 _clear_inflight_turn(session)
             return
-        _run_prompt_submit(rid, sid, session, text)
+        _run_prompt_submit(rid, sid, session, text, system_context=system_context)
 
     threading.Thread(target=run_after_agent_ready, daemon=True).start()
     return _ok(rid, {"status": "streaming"})
@@ -5281,7 +5344,14 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
     return stop
 
 
-def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
+def _run_prompt_submit(
+    rid,
+    sid: str,
+    session: dict,
+    text: Any,
+    *,
+    system_context: str | None = None,
+) -> None:
     with session["history_lock"]:
         history = list(session["history"])
         history_version = int(session.get("history_version", 0))
@@ -5426,7 +5496,19 @@ def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
                     run_kwargs["task_id"] = session["session_key"]
             except (TypeError, ValueError):
                 pass
-            result = agent.run_conversation(run_message, **run_kwargs)
+            base_ephemeral_system_prompt = getattr(agent, "ephemeral_system_prompt", None)
+            turn_system_context = str(system_context or "").strip()
+            if turn_system_context:
+                agent.ephemeral_system_prompt = "\n\n".join(
+                    part
+                    for part in (base_ephemeral_system_prompt, turn_system_context)
+                    if isinstance(part, str) and part.strip()
+                ) or None
+            try:
+                result = agent.run_conversation(run_message, **run_kwargs)
+            finally:
+                if turn_system_context:
+                    agent.ephemeral_system_prompt = base_ephemeral_system_prompt
 
             last_reasoning = None
             status_note = None
@@ -5587,6 +5669,13 @@ def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
                         text,
                         raw,
                         session.get("history", []),
+                        main_runtime={
+                            "model": getattr(agent, "model", None),
+                            "provider": getattr(agent, "provider", None),
+                            "base_url": getattr(agent, "base_url", None),
+                            "api_key": getattr(agent, "api_key", None),
+                            "api_mode": getattr(agent, "api_mode", None),
+                        } if agent else None,
                     )
                 except Exception:
                     pass

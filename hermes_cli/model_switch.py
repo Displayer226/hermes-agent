@@ -666,6 +666,35 @@ def switch_model(
     new_model = raw_input.strip()
     target_provider = current_provider
 
+    # Auto-detect provider prefix in model name (e.g. "provider/model")
+    if not explicit_provider and "/" in new_model:
+        parts = new_model.split("/", 1)
+        prefix = parts[0].strip()
+        suffix = parts[1].strip()
+        pdef = resolve_provider_full(
+            prefix,
+            user_providers,
+            custom_providers,
+        )
+        if pdef is not None:
+            explicit_provider = pdef.id
+            new_model = suffix
+
+    # Map generic "custom" provider back to a named custom provider if current_base_url matches
+    if target_provider == "custom" and current_base_url:
+        matched_provider = None
+        if custom_providers:
+            for entry in custom_providers:
+                if isinstance(entry, dict):
+                    url = (entry.get("base_url") or entry.get("url") or entry.get("api") or "").strip().rstrip("/")
+                    if url and current_base_url.strip().rstrip("/") == url:
+                        name = (entry.get("name") or "").strip()
+                        if name:
+                            matched_provider = f"custom:{name.lower()}"
+                            break
+        if matched_provider:
+            target_provider = matched_provider
+
     # =================================================================
     # PATH A: Explicit --provider given
     # =================================================================
@@ -864,6 +893,13 @@ def switch_model(
         is_custom = current_provider in {"custom", "local"} or (
             "localhost" in _base or "127.0.0.1" in _base
         )
+        if not is_custom:
+            try:
+                from hermes_cli.runtime_provider import _get_named_custom_provider
+                if _get_named_custom_provider(current_provider):
+                    is_custom = True
+            except Exception:
+                pass
 
         if (
             target_provider == current_provider

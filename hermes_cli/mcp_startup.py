@@ -51,8 +51,13 @@ def start_background_mcp_discovery(*, logger, thread_name: str) -> None:
         thread.start()
 
 
-def wait_for_mcp_discovery(timeout: float = 0.75) -> None:
-    """Briefly wait for background MCP discovery before the first tool snapshot."""
+def wait_for_mcp_discovery(timeout: float = 3.0) -> None:
+    """Briefly wait for background MCP discovery before the first tool snapshot.
+
+    Default 3s gives remote/slow MCP servers (e.g. SillyTavern proxy with
+    browser websocket) time to connect.  The discovery runs in parallel,
+    so fast servers are not penalised.
+    """
     thread = _mcp_discovery_thread
     if thread is None or not thread.is_alive():
         return

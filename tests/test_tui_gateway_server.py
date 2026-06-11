@@ -3113,6 +3113,84 @@ def test_prompt_submit_expands_context_refs(monkeypatch):
     assert captured["prompt"] == "expanded prompt"
 
 
+def test_prompt_submit_accepts_system_context_and_structured_history(monkeypatch):
+    captured = {}
+
+    class _Agent:
+        ephemeral_system_prompt = "base prompt"
+        _last_flushed_db_idx = 0
+
+        def run_conversation(
+            self, prompt, conversation_history=None, stream_callback=None
+        ):
+            captured["prompt"] = prompt
+            captured["history"] = conversation_history
+            captured["ephemeral_system_prompt"] = self.ephemeral_system_prompt
+            return {
+                "final_response": "ok",
+                "messages": [
+                    *(conversation_history or []),
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "ok"},
+                ],
+            }
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    class _FakeDB:
+        def create_session(self, *args, **kwargs):
+            captured["created"] = True
+
+        def replace_messages(self, session_key, messages):
+            captured["replaced"] = (session_key, messages)
+
+    history = [
+        {"role": "system", "content": "ignored system"},
+        {"role": "user", "content": "old user"},
+        {"role": "assistant", "content": "old assistant"},
+    ]
+    agent = _Agent()
+    server._sessions["sid"] = _session(agent=agent, history=[{"role": "user", "content": "stale"}])
+    monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(server, "_get_db", lambda: _FakeDB())
+    monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "make_stream_renderer", lambda cols: None)
+    monkeypatch.setattr(server, "render_message", lambda raw, cols: None)
+    monkeypatch.setattr(server, "_sync_session_key_after_compress", lambda *args, **kwargs: None)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "prompt.submit",
+                "params": {
+                    "session_id": "sid",
+                    "text": "current user",
+                    "system_context": "turn system context",
+                    "conversation_history": history,
+                },
+            }
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+    assert resp["result"]["status"] == "streaming"
+    assert captured["prompt"] == "current user"
+    assert captured["history"] == [
+        {"role": "user", "content": "old user"},
+        {"role": "assistant", "content": "old assistant"},
+    ]
+    assert captured["ephemeral_system_prompt"] == "base prompt\n\nturn system context"
+    assert captured["replaced"] == ("session-key", captured["history"])
+    assert agent._last_flushed_db_idx == len(captured["history"])
+    assert agent.ephemeral_system_prompt == "base prompt"
+
+
 def test_image_attach_appends_local_image(monkeypatch):
     fake_cli = types.ModuleType("cli")
     fake_cli._IMAGE_EXTENSIONS = {".png"}
