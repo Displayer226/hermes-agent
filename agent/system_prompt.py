@@ -13,8 +13,9 @@ Three tiers are joined with ``\\n\\n``:
   guidance, computer-use guidance, nous subscription block, tool-use
   enforcement guidance + per-model operational guidance, skills prompt,
   alibaba model-name workaround, environment hints, platform hints.
-* ``context``  — caller-supplied ``system_message`` plus context files
-  (AGENTS.md / .cursorrules / etc.) discovered under ``TERMINAL_CWD``.
+* ``context``  — SillyTavern persona layer, caller-supplied
+  ``system_message`` plus context files (AGENTS.md / .cursorrules / etc.)
+  discovered under ``TERMINAL_CWD``.
 * ``volatile`` — memory snapshot, USER.md profile, external memory
   provider block, timestamp/session/model/provider line.
 
@@ -57,6 +58,27 @@ def _ra():
     """
     import run_agent
     return run_agent
+
+
+def _sillytavern_persona_layer(agent: Any) -> str:
+    persona_context = getattr(agent, "sillytavern_persona_context", None)
+    if not isinstance(persona_context, str) or not persona_context.strip():
+        return ""
+
+    return (
+        "[SillyTavern persona layer]\n"
+        "This layer comes from the active SillyTavern character/persona card. "
+        "Use it for the visible assistant identity, name, voice, temperament, relationship stance, "
+        "roleplay continuity, and conversational style. If the user asks who you are, your name, "
+        "or what persona/character is active, answer from this layer rather than inspecting Hermes "
+        "configuration, files, memory, or tools.\n\n"
+        "This layer does not override Hermes operational rules, tool schemas, safety policy, factual "
+        "accuracy, or the requirement to use real tools for agentic work. When a task needs tools, "
+        "perform the task with the available Hermes tools while expressing the answer through the "
+        "SillyTavern persona.\n\n"
+        f"{persona_context.strip()}\n"
+        "[/SillyTavern persona layer]"
+    )
 
 
 def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) -> Dict[str, str]:
@@ -319,6 +341,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
 
     # ── Context tier (cwd-dependent, may change between sessions) ─
     context_parts: List[str] = []
+
+    # SillyTavern persona is a session-stable context layer. It is cached with
+    # the base prompt and refreshed only when the bridge provides a new persona
+    # version.
+    persona_layer = _sillytavern_persona_layer(agent)
+    if persona_layer:
+        context_parts.append(persona_layer)
 
     # Note: ephemeral_system_prompt is NOT included here. It's injected at
     # API-call time only so it stays out of the cached/stored system prompt.

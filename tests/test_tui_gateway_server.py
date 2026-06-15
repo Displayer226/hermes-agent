@@ -3191,6 +3191,171 @@ def test_prompt_submit_accepts_system_context_and_structured_history(monkeypatch
     assert agent.ephemeral_system_prompt == "base prompt"
 
 
+def test_prompt_submit_applies_sillytavern_persona_layer(monkeypatch):
+    captured = {}
+
+    class _Agent:
+        ephemeral_system_prompt = "base prompt"
+        _last_flushed_db_idx = 0
+        _session_db = None
+        _cached_system_prompt = None
+        session_id = "agent-session"
+
+        def _build_system_prompt(self, system_message=None):
+            captured["built_system_message"] = system_message
+            return (
+                "cached prompt\n"
+                + getattr(self, "sillytavern_persona_context", "")
+                + "\n"
+                + str(system_message or "")
+            )
+
+        def run_conversation(
+            self, prompt, system_message=None, conversation_history=None, stream_callback=None
+        ):
+            captured["prompt"] = prompt
+            captured["history"] = conversation_history
+            captured["system_message"] = system_message
+            captured["ephemeral_system_prompt"] = self.ephemeral_system_prompt
+            return {
+                "final_response": "ok",
+                "messages": [
+                    *(conversation_history or []),
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "ok"},
+                ],
+            }
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    agent = _Agent()
+    server._sessions["sid"] = _session(agent=agent, history=[])
+    monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(server, "_get_db", lambda: None)
+    monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "make_stream_renderer", lambda cols: None)
+    monkeypatch.setattr(server, "render_message", lambda raw, cols: None)
+    monkeypatch.setattr(server, "_sync_session_key_after_compress", lambda *args, **kwargs: None)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "prompt.submit",
+                "params": {
+                    "session_id": "sid",
+                    "text": "What is your name?",
+                    "system_context": "bridge response contract",
+                    "persona_context": "# ARIA\n- Nom : ARIA",
+                    "persona_reminder": "Remember: answer identity as ARIA.",
+                    "persona_version": "persona-v1",
+                },
+            }
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+    assert resp["result"]["status"] == "streaming"
+    assert captured["prompt"] == "What is your name?"
+    assert captured["system_message"] == "bridge response contract"
+    assert captured["built_system_message"] == "bridge response contract"
+    assert captured["ephemeral_system_prompt"] == (
+        "base prompt\n\nRemember: answer identity as ARIA."
+    )
+    assert agent.sillytavern_persona_context == "# ARIA\n- Nom : ARIA"
+    assert agent.sillytavern_persona_version == "persona-v1"
+    assert "# ARIA" in agent._cached_system_prompt
+    assert server._sessions.get("sid", {}).get("persona_dirty") is None
+    assert agent.ephemeral_system_prompt == "base prompt"
+
+
+def test_prompt_submit_clears_sillytavern_persona_layer(monkeypatch):
+    captured = {}
+
+    class _Agent:
+        ephemeral_system_prompt = "base prompt"
+        _last_flushed_db_idx = 0
+        _session_db = None
+        _cached_system_prompt = "old persona prompt"
+        session_id = "agent-session"
+        sillytavern_persona_context = "# OLD"
+        sillytavern_persona_version = "old"
+
+        def _build_system_prompt(self, system_message=None):
+            captured["built_system_message"] = system_message
+            captured["built_persona_context"] = getattr(
+                self, "sillytavern_persona_context", None
+            )
+            return "cached prompt\n" + str(captured["built_persona_context"] or "")
+
+        def run_conversation(
+            self, prompt, system_message=None, conversation_history=None, stream_callback=None
+        ):
+            captured["prompt"] = prompt
+            captured["system_message"] = system_message
+            captured["ephemeral_system_prompt"] = self.ephemeral_system_prompt
+            return {
+                "final_response": "ok",
+                "messages": [
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": "ok"},
+                ],
+            }
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    agent = _Agent()
+    session = _session(agent=agent, history=[])
+    session["persona_context"] = "# OLD"
+    session["persona_reminder"] = "old reminder"
+    session["persona_version"] = "old"
+    server._sessions["sid"] = session
+    monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(server, "_get_db", lambda: None)
+    monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "make_stream_renderer", lambda cols: None)
+    monkeypatch.setattr(server, "render_message", lambda raw, cols: None)
+    monkeypatch.setattr(server, "_sync_session_key_after_compress", lambda *args, **kwargs: None)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "prompt.submit",
+                "params": {
+                    "session_id": "sid",
+                    "text": "hello",
+                    "persona_context": "",
+                    "persona_reminder": "",
+                    "persona_version": "",
+                },
+            }
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+    assert resp["result"]["status"] == "streaming"
+    assert captured["prompt"] == "hello"
+    assert captured["system_message"] is None
+    assert captured["built_system_message"] is None
+    assert captured["built_persona_context"] == ""
+    assert captured["ephemeral_system_prompt"] == "base prompt"
+    assert agent.sillytavern_persona_context == ""
+    assert agent.sillytavern_persona_version is None
+    assert agent._cached_system_prompt == "cached prompt\n"
+    assert agent.ephemeral_system_prompt == "base prompt"
+
+
 def test_image_attach_appends_local_image(monkeypatch):
     fake_cli = types.ModuleType("cli")
     fake_cli._IMAGE_EXTENSIONS = {".png"}

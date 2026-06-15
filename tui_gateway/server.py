@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import contextvars
 import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -5044,6 +5045,53 @@ def _prompt_submit_system_context(params: dict) -> str | None:
     return text or None
 
 
+def _prompt_submit_text_param(params: dict, key: str) -> str | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _persona_version_for_context(persona_context: str | None) -> str | None:
+    if not persona_context:
+        return None
+    return hashlib.sha256(persona_context.encode("utf-8")).hexdigest()[:16]
+
+
+def _apply_prompt_submit_persona(session: dict, params: dict) -> None:
+    persona_context_supplied = "persona_context" in params
+    persona_reminder_supplied = "persona_reminder" in params
+    persona_context = _prompt_submit_text_param(params, "persona_context")
+    persona_reminder = _prompt_submit_text_param(params, "persona_reminder")
+    persona_version = _prompt_submit_text_param(params, "persona_version")
+
+    if persona_context_supplied and not persona_context:
+        if session.get("persona_version") != "" or session.get("persona_context"):
+            session["persona_dirty"] = True
+        session["persona_context"] = ""
+        session["persona_version"] = ""
+        if persona_reminder_supplied or session.get("persona_reminder"):
+            session["persona_reminder"] = ""
+        return
+
+    if persona_context and not persona_version:
+        persona_version = _persona_version_for_context(persona_context)
+
+    if persona_context:
+        if session.get("persona_version") != persona_version:
+            session["persona_context"] = persona_context
+            session["persona_version"] = persona_version
+            session["persona_dirty"] = True
+        elif session.get("persona_context") != persona_context:
+            # Same client version but different text: keep the text authoritative.
+            session["persona_context"] = persona_context
+            session["persona_dirty"] = True
+
+    if persona_reminder_supplied:
+        session["persona_reminder"] = persona_reminder
+
+
 def _prompt_submit_conversation_history(params: dict) -> tuple[list[dict[str, Any]] | None, str | None]:
     if "conversation_history" not in params and "messages" not in params:
         return None, None
@@ -5095,6 +5143,7 @@ def _(rid, params: dict) -> dict:
     with session["history_lock"]:
         if session.get("running"):
             return _err(rid, 4009, "session busy")
+        _apply_prompt_submit_persona(session, params)
         if replacement_history is not None:
             session["history"] = list(replacement_history)
             session["history_version"] = int(session.get("history_version", 0)) + 1
@@ -5357,6 +5406,10 @@ def _run_prompt_submit(
         history_version = int(session.get("history_version", 0))
         images = list(session.get("attached_images", []))
         session["attached_images"] = []
+        persona_context = session.get("persona_context")
+        persona_reminder = session.get("persona_reminder")
+        persona_version = session.get("persona_version")
+        persona_dirty = bool(session.pop("persona_dirty", False))
         if not isinstance(session.get("inflight_turn"), dict):
             _start_inflight_turn(session, text)
     agent = session["agent"]
@@ -5491,24 +5544,68 @@ def _run_prompt_submit(
                 "conversation_history": list(history),
                 "stream_callback": _stream,
             }
+            run_params = {}
             try:
-                if "task_id" in inspect.signature(agent.run_conversation).parameters:
+                run_params = inspect.signature(agent.run_conversation).parameters
+                if "task_id" in run_params:
                     run_kwargs["task_id"] = session["session_key"]
             except (TypeError, ValueError):
                 pass
-            base_ephemeral_system_prompt = getattr(agent, "ephemeral_system_prompt", None)
             turn_system_context = str(system_context or "").strip()
-            if turn_system_context:
+            if turn_system_context and "system_message" in run_params:
+                run_kwargs["system_message"] = turn_system_context
+
+            turn_persona_context = (
+                persona_context.strip() if isinstance(persona_context, str) else ""
+            )
+            if turn_persona_context:
+                setattr(agent, "sillytavern_persona_context", turn_persona_context)
+                setattr(agent, "sillytavern_persona_version", persona_version or None)
+            elif persona_dirty:
+                setattr(agent, "sillytavern_persona_context", "")
+                setattr(agent, "sillytavern_persona_version", None)
+
+            if persona_dirty and hasattr(agent, "_build_system_prompt"):
+                try:
+                    agent._cached_system_prompt = agent._build_system_prompt(
+                        turn_system_context or None
+                    )
+                    session_db = getattr(agent, "_session_db", None)
+                    agent_session_id = getattr(agent, "session_id", None)
+                    if (
+                        agent_session_id
+                        and session_db is not None
+                        and hasattr(session_db, "update_system_prompt")
+                    ):
+                        session_db.update_system_prompt(
+                            agent_session_id,
+                            agent._cached_system_prompt,
+                        )
+                except Exception as exc:
+                    print(
+                        f"[tui_gateway] prompt.submit: persona prompt refresh failed: {exc}",
+                        file=sys.stderr,
+                    )
+
+            base_ephemeral_system_prompt = getattr(agent, "ephemeral_system_prompt", None)
+            turn_persona_reminder = str(persona_reminder or "").strip()
+            ephemeral_parts = [base_ephemeral_system_prompt]
+            if turn_persona_reminder:
+                ephemeral_parts.append(turn_persona_reminder)
+            # Older test doubles and non-standard agents may not expose the
+            # ``system_message`` argument. Keep the previous behavior for them.
+            if turn_system_context and "system_message" not in run_params:
+                ephemeral_parts.append(turn_system_context)
+            if any(isinstance(part, str) and part.strip() for part in ephemeral_parts):
                 agent.ephemeral_system_prompt = "\n\n".join(
                     part
-                    for part in (base_ephemeral_system_prompt, turn_system_context)
+                    for part in ephemeral_parts
                     if isinstance(part, str) and part.strip()
                 ) or None
             try:
                 result = agent.run_conversation(run_message, **run_kwargs)
             finally:
-                if turn_system_context:
-                    agent.ephemeral_system_prompt = base_ephemeral_system_prompt
+                agent.ephemeral_system_prompt = base_ephemeral_system_prompt
 
             last_reasoning = None
             status_note = None
