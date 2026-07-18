@@ -76,6 +76,26 @@ def _init_code_repo(path):
     (path / "main.py").write_text("print('hi')\n")
 
 
+def test_profile_hint_uses_gateway_session_profile():
+    from gateway.session_context import clear_session_vars, set_session_vars
+
+    tokens = set_session_vars(profile="online")
+    try:
+        stable = _stable_prompt(_make_agent())
+    finally:
+        clear_session_vars(tokens)
+
+    assert "Active Hermes profile: online." in stable
+    assert "Active Hermes profile: default." not in stable
+
+
+def test_profile_hint_prefers_profile_pinned_on_agent():
+    stable = _stable_prompt(_make_agent(_hermes_profile_name="online"))
+
+    assert "Active Hermes profile: online." in stable
+    assert "Active Hermes profile: default." not in stable
+
+
 class TestCodingContextBlock:
     def test_injected_when_active(self, monkeypatch, tmp_path):
         _init_code_repo(tmp_path)

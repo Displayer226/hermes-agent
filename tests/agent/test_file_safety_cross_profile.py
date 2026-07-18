@@ -84,6 +84,17 @@ def _set_active_home(monkeypatch, hermes_home: Path):
 
 
 class TestResolveActiveProfileName:
+    def test_session_profile_wins_over_process_home(self, fake_hermes, monkeypatch):
+        from agent.file_safety import _resolve_active_profile_name
+        from gateway.session_context import clear_session_vars, set_session_vars
+
+        _set_active_home(monkeypatch, fake_hermes["default_home"])
+        tokens = set_session_vars(profile="online")
+        try:
+            assert _resolve_active_profile_name() == "online"
+        finally:
+            clear_session_vars(tokens)
+
     def test_default_when_home_is_root(self, fake_hermes, monkeypatch):
         _set_active_home(monkeypatch, fake_hermes["default_home"])
         from agent.file_safety import _resolve_active_profile_name

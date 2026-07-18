@@ -77,13 +77,20 @@ def test_session_context_uses_session_cwd(monkeypatch, tmp_path):
     launcher = tmp_path / "apps" / "desktop"
     launcher.mkdir(parents=True)
 
-    server._sessions[sid] = {"session_key": session_key, "cwd": str(project)}
+    server._sessions[sid] = {
+        "session_key": session_key,
+        "cwd": str(project),
+        "profile_name": "online",
+    }
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     monkeypatch.chdir(launcher)
 
     tokens = server._set_session_context(session_key)
     try:
+        from gateway.session_context import get_session_env
+
         assert resolve_agent_cwd() == project
+        assert get_session_env("HERMES_SESSION_PROFILE") == "online"
     finally:
         server._clear_session_context(tokens)
         server._sessions.pop(sid, None)
@@ -291,6 +298,54 @@ def test_terminal_task_cwd_ssh_sentinel_cwd_falls_back_to_session(monkeypatch):
     monkeypatch.setattr(server, "_load_cfg", lambda: {"terminal": {"cwd": "."}})
 
     assert server._terminal_task_cwd({"cwd": "/host/session/dir"}) == "/host/session/dir"
+
+
+def test_terminal_task_cwd_docker_session_mount_uses_session_cwd(monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setenv("TERMINAL_CWD", "/root")
+    monkeypatch.setenv("TERMINAL_DOCKER_SESSION_CWD_MOUNT", "true")
+
+    assert server._terminal_task_cwd({"cwd": "/"}) == "/"
+
+
+def test_register_session_cwd_captures_profile_docker_policy(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("TERMINAL_ENV", "docker")
+    monkeypatch.setattr(
+        server,
+        "_load_cfg",
+        lambda: {
+            "terminal": {
+                "docker_session_cwd_mount": True,
+                "docker_session_cwd_allowed_roots": '["/"]',
+                "docker_network": False,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "tools.terminal_tool.register_task_env_overrides",
+        lambda task_id, overrides: captured.update(
+            {"task_id": task_id, "overrides": overrides}
+        ),
+    )
+
+    server._register_session_cwd({"session_key": "session-a", "cwd": "/"})
+
+    assert captured == {
+        "task_id": "session-a",
+        "overrides": {
+            "cwd": "/",
+            "docker_session_cwd_mount": True,
+            "docker_session_cwd_allowed_roots": '["/"]',
+            "docker_network": False,
+        },
+    }
+
+
+def test_session_profile_name_uses_routed_profile_home(tmp_path):
+    profile_home = tmp_path / "profiles" / "local"
+
+    assert server._session_profile_name({"profile_home": str(profile_home)}) == "local"
 
 
 class _ChunkyStdout:
@@ -6241,6 +6296,43 @@ def test_session_delete_success_returns_deleted_id(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# profiles.list
+
+
+def test_profiles_list_returns_profile_metadata(monkeypatch):
+    from types import SimpleNamespace
+
+    import hermes_cli.profiles as profiles
+
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
+    monkeypatch.setattr(
+        profiles,
+        "list_profiles",
+        lambda: [
+            SimpleNamespace(
+                name="default",
+                description="Default profile",
+                model="model-a",
+                provider="provider-a",
+                is_default=True,
+            ),
+            SimpleNamespace(
+                name="local",
+                description="Local sandbox",
+                model="model-b",
+                provider="provider-b",
+                is_default=False,
+            ),
+        ],
+    )
+
+    resp = server._methods["profiles.list"](76, {})
+
+    assert resp["result"]["active"] == "default"
+    assert [item["name"] for item in resp["result"]["profiles"]] == ["default", "local"]
+    assert resp["result"]["profiles"][0]["active"] is True
+
+
 # model.options — curated-list parity with `hermes model` and classic /model
 # --------------------------------------------------------------------------
 

@@ -366,6 +366,15 @@ def _resolve_active_profile_name() -> str:
     never raises into the tool path.
     """
     try:
+        from gateway.session_context import get_session_env
+
+        session_profile = get_session_env("HERMES_SESSION_PROFILE", "").strip()
+        if session_profile:
+            return session_profile
+    except Exception:
+        pass
+
+    try:
         home_real = _hermes_home_path().resolve()
         root_real = _hermes_root_path().resolve()
     except (OSError, RuntimeError):

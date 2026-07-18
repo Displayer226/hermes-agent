@@ -1117,7 +1117,31 @@ def build_environment_hints() -> str:
             hints.append(_WINDOWS_BASH_SHELL_HINT)
     else:
         # --- Remote backend block (host info suppressed) ---
-        probe = _probe_remote_backend(backend)
+        session_workspace_hint = ""
+        if backend == "docker":
+            try:
+                from agent.runtime_cwd import resolve_context_cwd
+                from tools.terminal_tool import (
+                    _get_env_config,
+                    _resolve_allowed_docker_session_cwd,
+                )
+
+                cfg = _get_env_config()
+                logical_cwd = resolve_context_cwd()
+                if cfg.get("docker_session_cwd_mount") and logical_cwd is not None:
+                    host_cwd = _resolve_allowed_docker_session_cwd(
+                        str(logical_cwd), cfg.get("docker_session_cwd_allowed_roots", [])
+                    )
+                    if host_cwd:
+                        session_workspace_hint = (
+                            "  Selected host workspace: " + host_cwd + "\n"
+                            "  Container working directory: /workspace\n"
+                            "  Host paths beneath the selected workspace are available at their relative path under /workspace."
+                        )
+            except Exception:
+                logger.debug("Could not resolve Docker session workspace hint", exc_info=True)
+
+        probe = session_workspace_hint or _probe_remote_backend(backend)
         if probe:
             hints.append(
                 f"Terminal backend: {backend}. Your `terminal`, `read_file`, "

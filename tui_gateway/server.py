@@ -1383,7 +1383,12 @@ def _start_agent_build(sid: str, session: dict) -> None:
                         kw["reasoning_config_override"] = reasoning
                     if (tier := current.get("create_service_tier_override")) is not None:
                         kw["service_tier_override"] = tier
-                agent = _make_agent(sid, key, **kw)
+                agent = _make_agent(
+                    sid,
+                    key,
+                    profile_name_override=_session_profile_name(current),
+                    **kw,
+                )
             finally:
                 _clear_session_context(tokens)
 
@@ -1541,6 +1546,19 @@ def _terminal_task_cwd(session: dict | None) -> str:
     not exist on the local macOS host but is still the correct execution cwd.
     """
     backend = (os.environ.get("TERMINAL_ENV") or "").strip().lower()
+    session_cwd_mount = False
+    try:
+        terminal_cfg = _load_cfg().get("terminal", {})
+        if isinstance(terminal_cfg, dict):
+            session_cwd_mount = bool(terminal_cfg.get("docker_session_cwd_mount"))
+    except Exception:
+        pass
+    session_cwd_mount = session_cwd_mount or (
+        os.environ.get("TERMINAL_DOCKER_SESSION_CWD_MOUNT", "false").strip().lower()
+        in {"true", "1", "yes"}
+    )
+    if backend == "docker" and session_cwd_mount:
+        return _session_cwd(session)
     if backend and backend != "local":
         raw = os.environ.get("TERMINAL_CWD", "").strip()
         if not raw:
@@ -1655,9 +1673,17 @@ def _register_session_cwd(session: dict | None) -> None:
     try:
         from tools.terminal_tool import register_task_env_overrides
 
-        register_task_env_overrides(
-            session["session_key"], {"cwd": _terminal_task_cwd(session)}
-        )
+        overrides = {"cwd": _terminal_task_cwd(session)}
+        terminal_cfg = _load_cfg().get("terminal", {})
+        if isinstance(terminal_cfg, dict):
+            for key in (
+                "docker_session_cwd_mount",
+                "docker_session_cwd_allowed_roots",
+                "docker_network",
+            ):
+                if key in terminal_cfg:
+                    overrides[key] = terminal_cfg[key]
+        register_task_env_overrides(session["session_key"], overrides)
     except Exception:
         pass
 
@@ -1996,14 +2022,17 @@ def _set_session_context(
         # it instead of falling back to the gateway launch dir.
         resolved = cwd if cwd is not None else _cwd_for_session_key(session_key)
         source = _resolve_session_platform()
+        profile = ""
         with _sessions_lock:
             for sess in list(_sessions.values()):
                 if sess.get("session_key") == session_key:
                     source = _session_source(sess)
+                    profile = _session_profile_name(sess)
                     break
         return set_session_vars(
             session_key=session_key,
             source=source,
+            profile=profile,
             cwd=resolved,
             ui_session_id=ui_session_id,
         )
@@ -3306,6 +3335,19 @@ def _current_profile_name() -> str:
         return "default"
 
 
+def _session_profile_name(session: dict | None) -> str:
+    """Return the profile routed to this session, not the process profile."""
+    explicit = str((session or {}).get("profile_name") or "").strip()
+    if explicit:
+        return explicit
+    profile_home = str((session or {}).get("profile_home") or "").strip()
+    if profile_home:
+        path = Path(profile_home)
+        if path.parent.name == "profiles" and path.name:
+            return path.name
+    return _current_profile_name()
+
+
 # Monotonic GUI<->backend contract version. The desktop app refuses to drive a
 # backend reporting less than its required value (or none at all — a pre-GUI
 # checkout), surfacing a one-click "update to align" prompt instead of failing
@@ -3378,7 +3420,7 @@ def _session_info(agent, session: dict | None = None) -> dict:
         "update_behind": None,
         "update_command": "",
         "usage": _get_usage(agent),
-        "profile_name": _current_profile_name(),
+        "profile_name": _session_profile_name(session),
     }
     try:
         from hermes_cli.config import (
@@ -4469,6 +4511,7 @@ def _make_agent(
     reasoning_config_override: dict | None = None,
     service_tier_override: str | None = None,
     platform_override: str | None = None,
+    profile_name_override: str | None = None,
 ):
     from run_agent import AIAgent
 
@@ -4579,7 +4622,7 @@ def _make_agent(
             "target_model": model or None,
         })
     _pr = _load_provider_routing()
-    return AIAgent(
+    agent = AIAgent(
         model=model,
         max_iterations=_cfg_max_turns(cfg, 90),
         provider=runtime.get("provider"),
@@ -4626,6 +4669,8 @@ def _make_agent(
         fallback_model=_load_fallback_model(),
         **_agent_cbs(sid),
     )
+    agent._hermes_profile_name = str(profile_name_override or "").strip()
+    return agent
 
 
 def _init_session(
@@ -5237,6 +5282,7 @@ def _(rid, params: dict) -> dict:
             "parent_session_id": parent_session_id,
             "pending_title": title or None,
             "profile_home": str(profile_home) if profile_home is not None else None,
+            "profile_name": profile or _current_profile_name(),
             "running": False,
             "session_key": key,
             "show_reasoning": _load_show_reasoning(),
@@ -5290,7 +5336,7 @@ def _(rid, params: dict) -> dict:
                 "branch": _git_branch_for_cwd(_sessions[sid]["cwd"]),
                 "lazy": True,
                 "desktop_contract": DESKTOP_BACKEND_CONTRACT,
-                "profile_name": _current_profile_name(),
+                "profile_name": _session_profile_name(_sessions[sid]),
             },
         },
     )
@@ -14181,6 +14227,28 @@ def _(rid, params: dict) -> dict:
                 }
             )
         return _ok(rid, {"toolsets": items})
+    except Exception as e:
+        return _err(rid, 5032, str(e))
+
+
+@method("profiles.list")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.profiles import get_active_profile_name, list_profiles
+
+        active = get_active_profile_name()
+        profiles = [
+            {
+                "name": profile.name,
+                "description": profile.description,
+                "model": profile.model,
+                "provider": profile.provider,
+                "is_default": profile.is_default,
+                "active": profile.name == active,
+            }
+            for profile in list_profiles()
+        ]
+        return _ok(rid, {"active": active, "profiles": profiles})
     except Exception as e:
         return _err(rid, 5032, str(e))
 

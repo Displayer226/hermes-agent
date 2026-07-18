@@ -1081,6 +1081,9 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         - modal_image: str -- Path to Dockerfile or Docker Hub image name
         - docker_image: str -- Docker image name
         - cwd: str -- Working directory inside the sandbox
+        - docker_session_cwd_mount: bool -- Bind the session cwd at /workspace
+        - docker_session_cwd_allowed_roots: list[str] -- Allowed host roots
+        - docker_network: bool -- Whether the Docker sandbox has network access
 
     Args:
         task_id: The rollout's unique task identifier
@@ -1108,7 +1111,17 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         with _env_lock:
             env = _active_environments.get(task_id) or _active_environments.get(container_id)
         if env is not None and getattr(env, "cwd", None) is not None:
-            env.cwd = new_cwd
+            effective_cwd = new_cwd
+            if _coerce_task_bool(overrides.get("docker_session_cwd_mount")):
+                roots = overrides.get("docker_session_cwd_allowed_roots", [])
+                if isinstance(roots, str):
+                    try:
+                        roots = json.loads(roots)
+                    except json.JSONDecodeError:
+                        roots = []
+                if _resolve_allowed_docker_session_cwd(new_cwd, roots):
+                    effective_cwd = "/workspace"
+            env.cwd = effective_cwd
 
 
 def clear_task_env_overrides(task_id: str):
@@ -1139,10 +1152,10 @@ def _resolve_container_task_id(task_id: Optional[str]) -> str:
     rollouts need their own isolated sandbox, which is the whole point of
     the override.
 
-    CWD-only overrides (registered by the ACP adapter for workspace
-    tracking) are *not* isolation signals — they should not cause each
-    session to spin up its own container.  Only overrides containing
-    backend-specific image keys or ``env_type`` trigger isolation.
+    CWD-only overrides (registered by the ACP adapter for workspace tracking)
+    normally are *not* isolation signals. The explicit Docker per-session mount
+    mode is the exception: each mounted host cwd must receive its own container,
+    otherwise sessions could accidentally share another session's bind mount.
     """
     _ISOLATION_KEYS = frozenset({
         "docker_image", "modal_image", "singularity_image",
@@ -1151,6 +1164,17 @@ def _resolve_container_task_id(task_id: Optional[str]) -> str:
     if task_id and task_id in _task_env_overrides:
         overrides = _task_env_overrides[task_id]
         if set(overrides.keys()) & _ISOLATION_KEYS:
+            return task_id
+        session_cwd_mount_enabled = (
+            os.getenv("TERMINAL_ENV", "local").strip().lower() == "docker"
+            and _coerce_task_bool(
+                overrides.get(
+                    "docker_session_cwd_mount",
+                    os.getenv("TERMINAL_DOCKER_SESSION_CWD_MOUNT", "false"),
+                )
+            )
+        )
+        if session_cwd_mount_enabled and isinstance(overrides.get("cwd"), str) and overrides["cwd"].strip():
             return task_id
     return "default"
 
@@ -1173,6 +1197,33 @@ def resolve_task_overrides(task_id: Optional[str]) -> Dict[str, Any]:
         or _task_env_overrides.get(_resolve_container_task_id(raw))
         or {}
     )
+
+
+def _coerce_task_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
+
+
+def apply_task_env_config_overrides(
+    config: Dict[str, Any], overrides: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Apply session-scoped Docker policy without mutating process globals."""
+    effective = dict(config)
+    for key in ("docker_session_cwd_mount", "docker_network"):
+        if key in overrides:
+            effective[key] = _coerce_task_bool(overrides[key])
+    if "docker_session_cwd_allowed_roots" in overrides:
+        roots = overrides["docker_session_cwd_allowed_roots"]
+        if isinstance(roots, str):
+            try:
+                roots = json.loads(roots)
+            except json.JSONDecodeError:
+                roots = []
+        effective["docker_session_cwd_allowed_roots"] = (
+            [str(root) for root in roots] if isinstance(roots, list) else []
+        )
+    return effective
 
 
 # Configuration from environment variables
@@ -1253,6 +1304,34 @@ def _is_unusable_container_cwd(cwd: str) -> bool:
     return False
 
 
+def _resolve_allowed_docker_session_cwd(candidate: str, allowed_roots: list) -> str | None:
+    """Return a canonical, allowed host directory for a per-session Docker mount.
+
+    The caller provides a host cwd from trusted session infrastructure, but it is
+    still treated as untrusted here. An empty allowlist denies all host mounts;
+    roots are canonicalised to prevent symlink escapes. ``/`` is valid only when
+    the operator intentionally includes it in the configuration.
+    """
+    if not isinstance(candidate, str) or not candidate.strip() or not isinstance(allowed_roots, list):
+        return None
+    try:
+        target = Path(candidate).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    if not target.is_dir():
+        return None
+    for root_raw in allowed_roots:
+        if not isinstance(root_raw, str) or not root_raw.strip():
+            continue
+        try:
+            root = Path(root_raw).expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        if root.is_dir() and (target == root or root in target.parents):
+            return str(target)
+    return None
+
+
 def _get_env_config() -> Dict[str, Any]:
     """Get terminal environment configuration from environment variables."""
     # Default image with Python and Node.js for maximum compatibility
@@ -1281,11 +1360,18 @@ def _get_env_config() -> Dict[str, Any]:
         docker_volumes = _parse_env_var("TERMINAL_DOCKER_VOLUMES", "[]", json.loads, "valid JSON")
         docker_env = _parse_env_var("TERMINAL_DOCKER_ENV", "{}", json.loads, "valid JSON")
         docker_extra_args = _parse_env_var("TERMINAL_DOCKER_EXTRA_ARGS", "[]", json.loads, "valid JSON")
+        docker_session_cwd_allowed_roots = _parse_env_var(
+            "TERMINAL_DOCKER_SESSION_CWD_ALLOWED_ROOTS", "[]", json.loads, "valid JSON"
+        )
+        if not isinstance(docker_session_cwd_allowed_roots, list):
+            logger.warning("TERMINAL_DOCKER_SESSION_CWD_ALLOWED_ROOTS must be a JSON list; denying session cwd mounts")
+            docker_session_cwd_allowed_roots = []
     else:
         docker_forward_env = []
         docker_volumes = []
         docker_env = {}
         docker_extra_args = []
+        docker_session_cwd_allowed_roots = []
 
     # Default cwd: local uses the host's current directory, ssh uses the
     # remote home, and everything else starts in the backend's default
@@ -1333,6 +1419,8 @@ def _get_env_config() -> Dict[str, Any]:
         "cwd": cwd,
         "host_cwd": host_cwd,
         "docker_mount_cwd_to_workspace": mount_docker_cwd,
+        "docker_session_cwd_mount": os.getenv("TERMINAL_DOCKER_SESSION_CWD_MOUNT", "false").lower() in {"true", "1", "yes"},
+        "docker_session_cwd_allowed_roots": docker_session_cwd_allowed_roots,
         "timeout": _parse_env_var("TERMINAL_TIMEOUT", "180"),
         "lifetime_seconds": _parse_env_var("TERMINAL_LIFETIME_SECONDS", "300"),
         # SSH-specific config
@@ -2063,8 +2151,9 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
-        # Get configuration
-        config = _get_env_config()
+        # Get configuration, then apply policy captured from this routed profile.
+        overrides = resolve_task_overrides(task_id)
+        config = apply_task_env_config_overrides(_get_env_config(), overrides)
         env_type = config["env_type"]
 
         # Use task_id for environment isolation. By default all subagent
@@ -2073,14 +2162,12 @@ def terminal_tool(
         # a registered env override (RL benchmarks) get isolated sandboxes.
         effective_task_id = _resolve_container_task_id(task_id)
 
-        # Check per-task overrides (set by environments like TerminalBench2Env)
+        # Per-task overrides are set by environments and routed gateway sessions.
         # before falling back to global env var config. ``resolve_task_overrides``
         # reads the raw task id first then the collapsed container id, so a
         # CWD-only override (which collapses ``effective_task_id`` to
         # ``"default"``) is still found under its originating session id while
         # isolation-keyed RL/benchmark overrides keep resolving as before.
-        overrides = resolve_task_overrides(task_id)
-        
         # Select image based on env type, with per-task override support
         if env_type == "docker":
             image = overrides.get("docker_image") or config["docker_image"]
@@ -2093,12 +2180,34 @@ def terminal_tool(
         else:
             image = ""
 
-        cwd = overrides.get("cwd") or config["cwd"]
+        requested_cwd = overrides.get("cwd") or config["cwd"]
+        cwd = requested_cwd
+        host_cwd = config.get("host_cwd")
+        auto_mount_cwd = config.get("docker_mount_cwd_to_workspace", False)
+
+        # A TUI/gateway session may carry a host path. In explicit per-session
+        # Docker mount mode, bind it at /workspace only after canonicalising it
+        # and checking the operator's allowlist. Every such session gets a
+        # separate container key (see _resolve_container_task_id).
+        if env_type == "docker" and config.get("docker_session_cwd_mount") and overrides.get("cwd"):
+            session_host_cwd = _resolve_allowed_docker_session_cwd(
+                str(overrides["cwd"]), config.get("docker_session_cwd_allowed_roots", [])
+            )
+            if session_host_cwd:
+                cwd = "/workspace"
+                host_cwd = session_host_cwd
+                auto_mount_cwd = True
+            else:
+                logger.warning(
+                    "Denied Docker session cwd mount %r: outside configured allowed roots or not a directory",
+                    overrides.get("cwd"),
+                )
+                cwd = config["cwd"]
         # A per-task cwd override (registered by the gateway/TUI for workspace
         # tracking, or by RL/benchmark envs) wins over config["cwd"] — but
         # config["cwd"] was already sanitized for container backends in
         # _get_env_config() while the override is raw. On a container backend a
-        # raw host path (e.g. a Windows desktop session's C:\Users\<user>, or a
+        # raw host path (e.g. a Windows desktop session's C:\\Users\\<user>, or a
         # POSIX /home/<user>) reaches `docker run -w <host-path>` and the
         # container fails to start (exit 125). Re-apply the same host/relative
         # path guard to the *resolved* cwd so the override can't bypass it.
@@ -2206,7 +2315,7 @@ def terminal_tool(
                                 "container_persistent": config.get("container_persistent", True),
                                 "modal_mode": config.get("modal_mode", "auto"),
                                 "docker_volumes": config.get("docker_volumes", []),
-                                "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+                                "docker_mount_cwd_to_workspace": auto_mount_cwd,
                                 "docker_forward_env": config.get("docker_forward_env", []),
                                 "docker_env": config.get("docker_env", {}),
                                 "docker_run_as_host_user": config.get("docker_run_as_host_user", False),
@@ -2231,7 +2340,7 @@ def terminal_tool(
                             container_config=container_config,
                             local_config=local_config,
                             task_id=effective_task_id,
-                            host_cwd=config.get("host_cwd"),
+                            host_cwd=host_cwd,
                         )
                     except ImportError as e:
                         return json.dumps({

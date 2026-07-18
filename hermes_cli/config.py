@@ -1235,6 +1235,13 @@ DEFAULT_CONFIG = {
         # Explicit opt-in: mount the host cwd into /workspace for Docker sessions.
         # Default off because passing host directories into a sandbox weakens isolation.
         "docker_mount_cwd_to_workspace": False,
+        # Per-session Docker workspace mounting. When enabled, an explicit TUI/
+        # gateway session cwd may be bind-mounted at /workspace, but only if it
+        # resolves beneath one of docker_session_cwd_allowed_roots. Empty = deny.
+        # Setting ["/"] deliberately permits the entire host and is for a trusted
+        # administrator-only integration, not an exposed messaging gateway.
+        "docker_session_cwd_mount": False,
+        "docker_session_cwd_allowed_roots": [],
         # Opt-in egress lockdown for Docker terminal sessions. When false,
         # Docker runs with --network=none so commands cannot reach the network.
         "docker_network": True,
@@ -6825,6 +6832,8 @@ TERMINAL_CONFIG_ENV_MAP = {
     "docker_volumes": "TERMINAL_DOCKER_VOLUMES",
     "docker_env": "TERMINAL_DOCKER_ENV",
     "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+    "docker_session_cwd_mount": "TERMINAL_DOCKER_SESSION_CWD_MOUNT",
+    "docker_session_cwd_allowed_roots": "TERMINAL_DOCKER_SESSION_CWD_ALLOWED_ROOTS",
     "docker_network": "TERMINAL_DOCKER_NETWORK",
     "docker_extra_args": "TERMINAL_DOCKER_EXTRA_ARGS",
     "docker_run_as_host_user": "TERMINAL_DOCKER_RUN_AS_HOST_USER",

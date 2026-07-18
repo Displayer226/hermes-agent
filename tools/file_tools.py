@@ -1051,6 +1051,8 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
         _creation_locks,
         _creation_locks_lock,
         _resolve_container_task_id,
+        _resolve_allowed_docker_session_cwd,
+        apply_task_env_config_overrides,
         _is_unusable_container_cwd,
         _CONTAINER_BACKENDS,
     )
@@ -1098,9 +1100,9 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
         if terminal_env is None:
             from tools.terminal_tool import resolve_task_overrides
 
-            config = _get_env_config()
-            env_type = config["env_type"]
             overrides = resolve_task_overrides(raw_task_id)
+            config = apply_task_env_config_overrides(_get_env_config(), overrides)
+            env_type = config["env_type"]
 
             if env_type == "docker":
                 image = overrides.get("docker_image") or config["docker_image"]
@@ -1114,6 +1116,25 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
                 image = ""
 
             cwd = overrides.get("cwd") or _last_known_cwd.get(task_id) or config["cwd"]
+            host_cwd = config.get("host_cwd")
+            auto_mount_cwd = config.get("docker_mount_cwd_to_workspace", False)
+
+            # Match terminal_tool's per-session workspace handling when a file
+            # tool is the first operation to create the Docker environment.
+            if env_type == "docker" and config.get("docker_session_cwd_mount") and overrides.get("cwd"):
+                session_host_cwd = _resolve_allowed_docker_session_cwd(
+                    str(overrides["cwd"]), config.get("docker_session_cwd_allowed_roots", [])
+                )
+                if session_host_cwd:
+                    cwd = "/workspace"
+                    host_cwd = session_host_cwd
+                    auto_mount_cwd = True
+                else:
+                    logger.warning(
+                        "Denied Docker session cwd mount %r: outside configured allowed roots or not a directory",
+                        overrides.get("cwd"),
+                    )
+                    cwd = config["cwd"]
             # Re-apply the container cwd guard that _get_env_config() already
             # ran on config["cwd"] (see #50636).  A per-task cwd override
             # registered by the gateway/TUI/ACP for workspace tracking is a
@@ -1144,7 +1165,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
                     "container_disk": config.get("container_disk", 51200),
                     "container_persistent": config.get("container_persistent", True),
                     "docker_volumes": config.get("docker_volumes", []),
-                    "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+                    "docker_mount_cwd_to_workspace": auto_mount_cwd,
                     "docker_forward_env": config.get("docker_forward_env", []),
                     "docker_run_as_host_user": config.get("docker_run_as_host_user", False),
                     "docker_network": config.get("docker_network", True),
@@ -1175,7 +1196,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
                 container_config=container_config,
                 local_config=local_config,
                 task_id=task_id,
-                host_cwd=config.get("host_cwd"),
+                host_cwd=host_cwd,
             )
 
             with _env_lock:

@@ -38,6 +38,22 @@ from agent.model_metadata import (
 logger = logging.getLogger(__name__)
 
 
+def _inherit_session_task_overrides(task_id: str) -> None:
+    """Copy gateway session sandbox overrides onto this turn's task id."""
+    try:
+        from gateway.session_context import get_session_env
+        from tools.terminal_tool import register_task_env_overrides, resolve_task_overrides
+
+        session_key = get_session_env("HERMES_SESSION_KEY", "").strip()
+        if not session_key or session_key == task_id:
+            return
+        overrides = resolve_task_overrides(session_key)
+        if overrides:
+            register_task_env_overrides(task_id, dict(overrides))
+    except Exception:
+        logger.debug("Could not inherit session sandbox overrides", exc_info=True)
+
+
 def _compression_made_progress(
     orig_len: int, new_len: int, orig_tokens: int, new_tokens: int
 ) -> bool:
@@ -214,6 +230,7 @@ def build_turn_context(
     agent._persist_user_message_timestamp = persist_user_timestamp
     # Generate unique task_id if not provided to isolate VMs between tasks.
     effective_task_id = task_id or str(uuid.uuid4())
+    _inherit_session_task_overrides(effective_task_id)
     agent._current_task_id = effective_task_id
     turn_id = f"{agent.session_id or 'session'}:{effective_task_id}:{uuid.uuid4().hex[:8]}"
     agent._current_turn_id = turn_id

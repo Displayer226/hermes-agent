@@ -1220,6 +1220,31 @@ class TestEnvironmentHints:
         assert "Terminal backend: docker" in result
         assert "inside" in result.lower()
 
+    def test_build_environment_hints_uses_docker_session_workspace(self, monkeypatch, tmp_path):
+        import agent.prompt_builder as _pb
+        import agent.runtime_cwd as runtime_cwd
+        import tools.terminal_tool as terminal_tool
+
+        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
+        monkeypatch.setenv("TERMINAL_ENV", "docker")
+        monkeypatch.setattr(
+            terminal_tool,
+            "_get_env_config",
+            lambda: {
+                "docker_session_cwd_mount": True,
+                "docker_session_cwd_allowed_roots": [str(tmp_path)],
+            },
+        )
+        token = runtime_cwd._SESSION_CWD.set(str(tmp_path))
+        try:
+            result = _pb.build_environment_hints()
+        finally:
+            runtime_cwd._SESSION_CWD.reset(token)
+
+        assert f"Selected host workspace: {tmp_path}" in result
+        assert "Container working directory: /workspace" in result
+        assert "Working directory: /root" not in result
+
     def test_build_environment_hints_uses_terminal_cwd_over_launch_dir(self, monkeypatch, tmp_path):
         """THE BUG: gateway/cron set TERMINAL_CWD but the prompt emitted os.getcwd()
         (the daemon launch dir). Regression for #24882/#24969/#27383/#29265."""
@@ -1644,5 +1669,4 @@ class TestParallelToolCallGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
 

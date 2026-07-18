@@ -197,6 +197,24 @@ def test_task_id_passthrough():
     assert agent._current_task_id == "fixed-task"
 
 
+def test_turn_inherits_gateway_session_environment_overrides(monkeypatch, tmp_path):
+    import tools.terminal_tool as terminal_tool
+    from gateway.session_context import clear_session_vars, set_session_vars
+
+    monkeypatch.setattr(
+        terminal_tool,
+        "_task_env_overrides",
+        {"session-key": {"cwd": str(tmp_path)}},
+    )
+    tokens = set_session_vars(session_key="session-key", cwd=str(tmp_path))
+    try:
+        agent = _FakeAgent()
+        _build(agent, task_id="turn-task")
+        assert terminal_tool.resolve_task_overrides("turn-task") == {"cwd": str(tmp_path)}
+    finally:
+        clear_session_vars(tokens)
+
+
 def test_persist_user_message_becomes_original():
     agent = _FakeAgent()
     ctx = _build(agent, user_message="api-prefixed", persist_user_message="clean")
@@ -363,4 +381,3 @@ def test_expired_cooldown_allows_preflight(tmp_path):
     assert isinstance(ctx, TurnContext)
     agent._emit_status.assert_called_once()
     agent._compress_context.assert_called()
-

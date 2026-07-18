@@ -408,11 +408,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # mid-session, so this doesn't break the prompt cache.
     # See file_safety._resolve_active_profile_name + classify_cross_profile_target
     # for the matching tool-side guard.
-    try:
-        from agent.file_safety import _resolve_active_profile_name
-        active_profile = _resolve_active_profile_name()
-    except Exception:
-        active_profile = "default"
+    active_profile = str(getattr(agent, "_hermes_profile_name", "") or "").strip()
+    if not active_profile:
+        try:
+            from agent.file_safety import _resolve_active_profile_name
+            active_profile = _resolve_active_profile_name()
+        except Exception:
+            active_profile = "default"
     if active_profile == "default":
         stable_parts.append(
             "Active Hermes profile: default. Other profiles (if any) live "
