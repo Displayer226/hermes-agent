@@ -1409,6 +1409,34 @@ def resolve_task_overrides(task_id: Optional[str]) -> Dict[str, Any]:
     )
 
 
+# Keys whose values may be snapshotted from a routed profile's terminal config.
+# The process-wide TERMINAL_* environment belongs to the dashboard launch
+# profile; app-global remote sessions therefore need a per-task overlay rather
+# than mutating os.environ and racing other profiles.
+_TASK_ENV_CONFIG_KEYS = frozenset({
+    "env_type", "modal_mode", "docker_image", "docker_forward_env",
+    "singularity_image", "modal_image", "daytona_image", "vercel_runtime",
+    "timeout", "lifetime_seconds", "ssh_host", "ssh_user", "ssh_port",
+    "ssh_key", "container_cpu", "container_memory", "container_disk",
+    "container_persistent", "docker_volumes", "docker_env",
+    "docker_mount_cwd_to_workspace", "docker_network", "docker_extra_args",
+    "docker_shm_size", "docker_run_as_host_user",
+    "docker_persist_across_processes", "docker_orphan_reaper",
+})
+
+
+def _get_task_env_config(task_id: Optional[str]) -> Dict[str, Any]:
+    """Return process defaults overlaid with this session's terminal posture."""
+    config = _get_env_config()
+    overrides = resolve_task_overrides(task_id)
+    config.update({
+        key: value
+        for key, value in overrides.items()
+        if key in _TASK_ENV_CONFIG_KEYS
+    })
+    return config
+
+
 def _resolve_task_host_cwd(config: Dict[str, Any], task_id: Optional[str]) -> Optional[str]:
     """Host directory to bind-mount at ``/workspace`` for *task_id*'s container.
 
@@ -2066,7 +2094,7 @@ def ensure_task_env(task_id: Optional[str] = None):
     instance, or ``None`` when local or when creation fails (best-effort: a
     failure leaves the caller's fail-closed error path intact).
     """
-    config = _get_env_config()
+    config = _get_task_env_config(task_id)
     env_type = config["env_type"]
     if env_type == "local":
         return None
@@ -2657,8 +2685,10 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
-        # Get configuration
-        config = _get_env_config()
+        # Get configuration. Routed dashboard sessions carry a per-task
+        # snapshot of their profile's terminal posture; process-wide TERMINAL_*
+        # values belong only to the dashboard launch profile.
+        config = _get_task_env_config(task_id)
         env_type = config["env_type"]
 
         # Use task_id for environment isolation. By default all subagent

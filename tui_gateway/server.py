@@ -2895,6 +2895,49 @@ def _session_source(session: dict | None) -> str:
     return _resolve_session_platform()
 
 
+_PROFILE_TERMINAL_OVERRIDE_KEYS = frozenset({
+    "modal_mode", "docker_image", "docker_forward_env", "singularity_image",
+    "modal_image", "daytona_image", "vercel_runtime", "timeout",
+    "lifetime_seconds", "ssh_host", "ssh_user", "ssh_port", "ssh_key",
+    "container_cpu", "container_memory", "container_disk",
+    "container_persistent", "docker_volumes", "docker_env",
+    "docker_mount_cwd_to_workspace", "docker_network", "docker_extra_args",
+    "docker_shm_size", "docker_run_as_host_user",
+    "docker_persist_across_processes", "docker_orphan_reaper",
+})
+
+
+def _profile_terminal_overrides(profile_home: str | Path | None) -> dict:
+    """Snapshot a routed profile's terminal posture for its session sandbox.
+
+    One dashboard can serve several profiles, but its process-wide TERMINAL_*
+    environment only describes the launch profile. Returning an immutable
+    per-session mapping avoids both privilege loss (admin inheriting default)
+    and privilege leakage (a later non-admin session inheriting admin).
+    """
+    if not profile_home:
+        return {}
+    try:
+        from hermes_cli.config import _expand_env_vars, read_user_config_raw
+
+        config = _apply_managed(read_user_config_raw(Path(profile_home) / "config.yaml"))
+        config = _expand_env_vars(config)
+        terminal = config.get("terminal", {}) if isinstance(config, dict) else {}
+        if not isinstance(terminal, dict):
+            return {}
+        overrides = {
+            key: terminal[key]
+            for key in _PROFILE_TERMINAL_OVERRIDE_KEYS
+            if key in terminal
+        }
+        if "backend" in terminal:
+            overrides["env_type"] = str(terminal.get("backend") or "local").strip().lower()
+        return overrides
+    except Exception:
+        logger.debug("failed to load routed profile terminal config", exc_info=True)
+        return {}
+
+
 def _register_session_cwd(session: dict | None) -> None:
     if not session:
         return
@@ -2902,9 +2945,9 @@ def _register_session_cwd(session: dict | None) -> None:
         from tools.terminal_tool import register_task_env_overrides
 
         cwd, cwd_source = _terminal_task_cwd_with_source(session)
-        register_task_env_overrides(
-            session["session_key"], {"cwd": cwd, "cwd_source": cwd_source}
-        )
+        overrides = _profile_terminal_overrides(session.get("profile_home"))
+        overrides.update({"cwd": cwd, "cwd_source": cwd_source})
+        register_task_env_overrides(session["session_key"], overrides)
     except Exception:
         pass
 
