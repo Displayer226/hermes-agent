@@ -17147,7 +17147,7 @@ def test_make_agent_combines_sillytavern_context_with_config_prompt(monkeypatch)
     assert captured["ephemeral_system_prompt"] == (
         "configured prompt\n\n"
         "[SillyTavern bridge context]\nresponse contract\n\n"
-        "[SillyTavern persona layer]\n# ARIA\n\n"
+        "[SillyTavern combined character and user context]\n# ARIA\n\n"
         "[SillyTavern persona reminder]\nAnswer as ARIA."
     )
 

@@ -7030,7 +7030,7 @@ def _make_agent(
         bridge_parts = []
         for key, heading in (
             ("system_context", "SillyTavern bridge context"),
-            ("persona_context", "SillyTavern persona layer"),
+            ("persona_context", "SillyTavern combined character and user context"),
             ("persona_reminder", "SillyTavern persona reminder"),
         ):
             value = str(sillytavern_context.get(key) or "").strip()
