@@ -178,7 +178,7 @@ def _terminal_env_type_for_task(task_id: str = "default") -> str:
         from tools.terminal_tool import (
             _active_environments,
             _env_lock,
-            _get_env_config,
+            _get_task_env_config,
             _resolve_container_task_id,
         )
 
@@ -202,7 +202,7 @@ def _terminal_env_type_for_task(task_id: str = "default") -> str:
                 return "modal"
             if "daytona" in name:
                 return "daytona"
-        cfg = _get_env_config()
+        cfg = _get_task_env_config(task_id)
         return str(cfg.get("env_type") or os.getenv("TERMINAL_ENV") or "local").lower()
     except Exception:
         return str(os.getenv("TERMINAL_ENV") or "local").lower()
@@ -1025,7 +1025,7 @@ def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | Non
         from tools.terminal_tool import (
             _active_environments,
             _env_lock,
-            _get_env_config,
+            _get_task_env_config,
             _resolve_container_task_id,
         )
 
@@ -1044,7 +1044,7 @@ def _get_container_mirror_prefix_for_task(task_id: str = "default") -> str | Non
                 return "/root/.hermes"
             return None
 
-        config = _get_env_config()
+        config = _get_task_env_config(task_id)
     except Exception:
         return None
 
@@ -1413,7 +1413,8 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     """
     from tools.terminal_tool import (
         _active_environments, _env_lock, _create_environment,
-        _get_env_config, _last_activity, _start_cleanup_thread,
+        _container_config_from_config, _get_task_env_config,
+        _last_activity, _ssh_config_from_config, _start_cleanup_thread,
         _creation_locks,
         _creation_locks_lock,
         _resolve_container_task_id,
@@ -1480,7 +1481,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
         if terminal_env is None:
             from tools.terminal_tool import resolve_task_overrides
 
-            config = _get_env_config()
+            config = _get_task_env_config(raw_task_id)
             env_type = config["env_type"]
             overrides = resolve_task_overrides(raw_task_id)
 
@@ -1525,28 +1526,11 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
 
             container_config = None
             if env_type in {"docker", "singularity", "modal", "daytona", "vercel_sandbox"}:
-                container_config = {
-                    "container_cpu": config.get("container_cpu", 1),
-                    "container_memory": config.get("container_memory", 5120),
-                    "container_disk": config.get("container_disk", 51200),
-                    "container_persistent": config.get("container_persistent", True),
-                    "vercel_runtime": config.get("vercel_runtime", ""),
-                    "docker_volumes": config.get("docker_volumes", []),
-                    "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
-                    "docker_forward_env": config.get("docker_forward_env", []),
-                    "docker_run_as_host_user": config.get("docker_run_as_host_user", False),
-                    "docker_network": config.get("docker_network", True),
-                }
+                container_config = _container_config_from_config(config)
 
             ssh_config = None
             if env_type == "ssh":
-                ssh_config = {
-                    "host": config.get("ssh_host", ""),
-                    "user": config.get("ssh_user", ""),
-                    "port": config.get("ssh_port", 22),
-                    "key": config.get("ssh_key", ""),
-                    "persistent": config.get("ssh_persistent", False),
-                }
+                ssh_config = _ssh_config_from_config(config)
 
             local_config = None
             if env_type == "local":
