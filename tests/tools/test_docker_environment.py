@@ -103,6 +103,46 @@ def test_auto_mount_host_cwd_adds_volume(monkeypatch, tmp_path):
     assert f"{project_dir}:/workspace" in run_args_str
 
 
+def test_auto_mount_linked_worktree_exposes_only_required_git_metadata(monkeypatch, tmp_path):
+    """`git status` in a linked worktree needs its external Git metadata."""
+    project_dir = tmp_path / "worktree"
+    common_dir = tmp_path / "common-git"
+    git_dir = common_dir / "worktrees" / "audit"
+    project_dir.mkdir()
+    git_dir.mkdir(parents=True)
+    (project_dir / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    _make_dummy_env(cwd="/workspace", host_cwd=str(project_dir), auto_mount_cwd=True)
+
+    run_args_str = " ".join(
+        " ".join(c[0]) for c in calls
+        if isinstance(c[0], list) and len(c[0]) >= 2 and c[0][1] == "run"
+    )
+    assert f"{project_dir}:/workspace" in run_args_str
+    assert f"{common_dir}:{common_dir}:ro" in run_args_str
+    assert f"{git_dir}:{git_dir}" in run_args_str
+
+
+def test_auto_mount_ignores_invalid_linked_worktree_git_metadata(monkeypatch, tmp_path):
+    """A malformed .git file must not create an arbitrary host bind mount."""
+    project_dir = tmp_path / "worktree"
+    project_dir.mkdir()
+    (project_dir / ".git").write_text("gitdir: /definitely/missing\n", encoding="utf-8")
+
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/usr/bin/docker")
+    calls = _mock_subprocess_run(monkeypatch)
+    _make_dummy_env(cwd="/workspace", host_cwd=str(project_dir), auto_mount_cwd=True)
+
+    run_args_str = " ".join(
+        " ".join(c[0]) for c in calls
+        if isinstance(c[0], list) and len(c[0]) >= 2 and c[0][1] == "run"
+    )
+    assert "/definitely/missing" not in run_args_str
+
+
 def test_non_persistent_cleanup_removes_container(monkeypatch):
     """When persist_across_processes=false, cleanup() must docker stop AND
     docker rm so containers don't leak across hermes processes.

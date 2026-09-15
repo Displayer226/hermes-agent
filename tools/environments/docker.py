@@ -80,6 +80,38 @@ def _normalize_env_dict(env: dict | None) -> dict[str, str]:
     return normalized
 
 
+def _linked_worktree_git_mounts(host_cwd: str) -> list[str]:
+    """Return the minimal Git metadata mounts for a linked worktree.
+
+    A linked worktree's ``.git`` file points to metadata outside the worktree.
+    Docker sees the worktree but not that target, so read-only operations such
+    as ``git status`` fail. Mount the shared Git directory read-only and this
+    worktree's own administrative directory read-write: Git can refresh the
+    per-worktree index but cannot alter shared refs or objects.
+    """
+    dot_git = Path(host_cwd) / ".git"
+    try:
+        line = dot_git.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError, UnicodeDecodeError):
+        return []
+    if not line.startswith("gitdir: "):
+        return []
+
+    gitdir = Path(line.removeprefix("gitdir: ").strip())
+    if not gitdir.is_absolute():
+        gitdir = dot_git.parent / gitdir
+    try:
+        gitdir = gitdir.resolve(strict=True)
+        common_ref = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+        common_dir = (gitdir / common_ref).resolve(strict=True)
+        gitdir.relative_to(common_dir)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return []
+    if not common_dir.is_dir() or not gitdir.is_dir():
+        return []
+    return ["-v", f"{common_dir}:{common_dir}:ro", "-v", f"{gitdir}:{gitdir}"]
+
+
 # Module-level binding: tests patch ``docker._load_hermes_env_vars`` to fake the .env file.
 _load_hermes_env_vars = load_hermes_env_vars
 
@@ -709,7 +741,11 @@ class DockerEnvironment(BaseEnvironment):
 
         if bind_host_cwd:
             logger.info("Mounting configured host cwd to /workspace: %s", host_cwd_abs)
-            volume_args = ["-v", f"{host_cwd_abs}:/workspace", *volume_args]
+            volume_args = [
+                "-v", f"{host_cwd_abs}:/workspace",
+                *_linked_worktree_git_mounts(host_cwd_abs),
+                *volume_args,
+            ]
         elif workspace_explicitly_mounted:
             logger.debug("Skipping docker cwd mount: /workspace already mounted by user config")
         return volume_args, writable_args

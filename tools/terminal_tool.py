@@ -512,6 +512,24 @@ def _resolve_task_host_cwd(config: Dict[str, Any], task_id: Optional[str]) -> Op
         return config.get("host_cwd")
     overrides = resolve_task_overrides(task_id)
     candidate = overrides.get("cwd")
+    if not candidate and os.environ.get("HERMES_SESSION_SOURCE", "").strip() == "kanban":
+        # A Kanban worker is launched by the dispatcher with cwd set to its
+        # declared workspace. Unlike TERMINAL_CWD, which can be inherited
+        # from an unrelated gateway session, accept this path only when it
+        # resolves to the worker process's own cwd.
+        workspace = os.environ.get("HERMES_KANBAN_WORKSPACE", "").strip()
+        if (
+            os.environ.get("HERMES_KANBAN_TASK", "").strip()
+            and workspace
+            and os.path.isabs(workspace)
+        ):
+            resolved_workspace = os.path.realpath(workspace)
+            resolved_cwd = os.path.realpath(os.getcwd())
+            if (
+                resolved_workspace == resolved_cwd
+                and os.path.isdir(resolved_workspace)
+            ):
+                candidate = resolved_workspace
     if overrides.get("cwd_source") == "process" or not isinstance(candidate, str) or not candidate.strip():
         return None
     candidate = os.path.abspath(os.path.expanduser(candidate))
