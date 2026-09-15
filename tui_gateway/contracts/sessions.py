@@ -117,6 +117,10 @@ class SessionCreateParams(ProfileParams):
     cols: int | None = None
     source: str | None = None
     cwd: str | None = None
+    system_context: str | None = None
+    persona_context: str | None = None
+    persona_reminder: str | None = None
+    persona_version: str | None = None
     messages: list[SeedMessage] | None = None
     parent_session_id: str | None = None
     title: str | None = None
