@@ -4,7 +4,7 @@ from tui_gateway import server
 from tools import terminal_tool
 
 
-def test_register_session_captures_profile_terminal_config(tmp_path, monkeypatch):
+def test_register_session_captures_only_session_cwd(tmp_path, monkeypatch):
     profile_home = tmp_path / "profiles" / "admin"
     profile_home.mkdir(parents=True)
     (profile_home / "config.yaml").write_text(
@@ -38,13 +38,9 @@ def test_register_session_captures_profile_terminal_config(tmp_path, monkeypatch
     )
 
     assert captured["task_id"] == "st-admin"
+    # Profile terminal policy is now bound through terminal_scope per turn;
+    # session overrides retain only session-owned workspace state.
     assert captured["overrides"] == {
-        "env_type": "docker",
-        "docker_image": "admin-image",
-        "docker_volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
-        "docker_network": True,
-        "docker_extra_args": ["--group-add=987"],
-        "container_persistent": False,
         "cwd": "/home/maxence/workspace",
         "cwd_source": "session",
     }
