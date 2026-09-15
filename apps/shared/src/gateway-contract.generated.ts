@@ -2443,6 +2443,10 @@ export interface SessionCreateParams {
   cols?: number | null
   source?: string | null
   cwd?: string | null
+  system_context?: string | null
+  persona_context?: string | null
+  persona_reminder?: string | null
+  persona_version?: string | null
   messages?: SeedMessage[] | null
   parent_session_id?: string | null
   title?: string | null

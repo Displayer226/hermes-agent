@@ -19568,6 +19568,38 @@ def test_session_create_records_stable_sillytavern_context(monkeypatch):
         server._sessions.clear()
 
 
+def test_session_create_contract_accepts_sillytavern_context(monkeypatch):
+    """JSON-RPC validation accepts bridge context but still rejects unknown fields."""
+    monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
+    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
+    context = {
+        "system_context": "response contract",
+        "persona_context": "# ARIA",
+        "persona_reminder": "Answer as ARIA.",
+        "persona_version": "persona-v1",
+    }
+    try:
+        response = server.handle_request(
+            {"id": "contract-create", "method": "session.create", "params": context}
+        )
+        assert response is not None
+        assert "error" not in response
+        session = server._sessions[response["result"]["session_id"]]
+        assert session["sillytavern_context"] == context
+
+        rejected = server.handle_request(
+            {
+                "id": "contract-unknown",
+                "method": "session.create",
+                "params": {"unknown_sillytavern_field": "nope"},
+            }
+        )
+        assert rejected is not None
+        assert rejected["error"]["code"] == 4000
+    finally:
+        server._sessions.clear()
+
+
 def test_make_agent_combines_sillytavern_context_with_config_prompt(monkeypatch):
     captured = {}
 
