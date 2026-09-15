@@ -155,6 +155,66 @@ class TestSessionScopedMountResolution:
         cfg = self._config(host_cwd=str(tmp_path))
         assert terminal_tool._resolve_task_host_cwd(cfg, "tui:sess-new") is None
 
+    def test_isolation_refuses_kanban_workspace_without_kanban_source(self, monkeypatch, tmp_path):
+        """An inherited Kanban workspace cannot grant a normal session a mount."""
+        _enable_isolation(monkeypatch)
+        workspace = tmp_path / "other-session"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_other")
+        monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", str(workspace))
+        cfg = self._config(host_cwd=str(workspace))
+
+        assert terminal_tool._resolve_task_host_cwd(cfg, "tui:sess-new") is None
+
+    def test_isolation_mounts_own_kanban_worker_workspace(self, monkeypatch, tmp_path):
+        """Kanban may mount only the workspace the dispatcher made its cwd."""
+        _enable_isolation(monkeypatch)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+        monkeypatch.setenv("HERMES_SESSION_SOURCE", "kanban")
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_kanban")
+        monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", str(workspace))
+
+        assert terminal_tool._resolve_task_host_cwd(
+            self._config(), "kanban-session"
+        ) == str(workspace)
+
+    @pytest.mark.parametrize("workspace", ["relative", "missing"])
+    def test_isolation_rejects_invalid_kanban_worker_workspace(
+        self, monkeypatch, tmp_path, workspace
+    ):
+        """Kanban cannot use relative or nonexistent workspace paths."""
+        _enable_isolation(monkeypatch)
+        worker_cwd = tmp_path / "worker"
+        worker_cwd.mkdir()
+        monkeypatch.chdir(worker_cwd)
+        monkeypatch.setenv("HERMES_SESSION_SOURCE", "kanban")
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_kanban")
+        value = workspace if workspace == "relative" else str(tmp_path / workspace)
+        monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", value)
+
+        assert terminal_tool._resolve_task_host_cwd(
+            self._config(), "kanban-session"
+        ) is None
+
+    def test_isolation_rejects_kanban_workspace_not_owned_by_worker(self, monkeypatch, tmp_path):
+        """A Kanban worker cannot mount another worker's workspace."""
+        _enable_isolation(monkeypatch)
+        worker_cwd = tmp_path / "worker"
+        other_workspace = tmp_path / "other"
+        worker_cwd.mkdir()
+        other_workspace.mkdir()
+        monkeypatch.chdir(worker_cwd)
+        monkeypatch.setenv("HERMES_SESSION_SOURCE", "kanban")
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_kanban")
+        monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", str(other_workspace))
+
+        assert terminal_tool._resolve_task_host_cwd(
+            self._config(), "kanban-session"
+        ) is None
+
     def test_isolation_refuses_process_tagged_override(self, monkeypatch, tmp_path):
         """A cwd override tagged cwd_source='process' (gateway env-var fallback)
         is a launch artifact, not a session workspace — never a mount source."""
