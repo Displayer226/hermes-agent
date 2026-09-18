@@ -287,6 +287,7 @@ class ComputeHost:
 
     def _ensure_server_session(self, server: Any, frame: dict[str, Any]) -> dict:
         sid = str(frame.get("sid") or "")
+        sillytavern_context = server._normalize_sillytavern_context(frame.get("sillytavern_context"))
         session = server._sessions.get(sid)
         if session is not None:
             session["transport"] = self._transport
@@ -297,6 +298,8 @@ class ComputeHost:
                     session[key] = str(frame[key])
         else:
             session = self._build_server_session(server, frame, sid)
+        if sillytavern_context is not None:
+            session["sillytavern_context"] = sillytavern_context
         if isinstance(frame.get("attached_images"), list):
             session["attached_images"] = list(frame.get("attached_images") or [])
         return session
@@ -306,6 +309,8 @@ class ComputeHost:
         key = str(frame.get("session_key") or sid)
         history = frame.get("history") if isinstance(frame.get("history"), list) else []
         profile_home = str(frame.get("profile_home") or "")
+        sillytavern_context = server._normalize_sillytavern_context(frame.get("sillytavern_context"))
+        prompt_context = server._sillytavern_prompt_context(sillytavern_context)
         session_db = home_token = secret_token = None
         owns_db = False
         try:
@@ -326,7 +331,8 @@ class ComputeHost:
                 platform_override=frame.get("source"),
                 context_cwd_is_launch_artifact=bool(
                     frame.get("context_cwd_is_launch_artifact", False)),
-                session_db=session_db, auth_user_id=frame.get("auth_user_id"))
+                session_db=session_db, auth_user_id=frame.get("auth_user_id"),
+                **({"sillytavern_context": prompt_context} if prompt_context is not None else {}))
             if server._transfer_db_to_agent(agent, session_db):
                 owns_db = False
         finally:
@@ -365,6 +371,8 @@ class ComputeHost:
                 "tool_started_at": {}, "model_override": frame.get("model_override"),
                 "source": server._sanitize_client_source(frame.get("source")),
                 "transport": self._transport}
+            if sillytavern_context is not None:
+                server._sessions[sid]["sillytavern_context"] = sillytavern_context
         session = server._sessions[sid]
         session["transport"] = self._transport
         # The host pipe names no login; the record carries the one the gateway stamped at creation.
@@ -372,6 +380,8 @@ class ComputeHost:
         session["profile_home"] = profile_home or session.get("profile_home")
         if frame.get("model_override") is not None:
             session["model_override"] = frame.get("model_override")
+        if sillytavern_context is not None:
+            session["sillytavern_context"] = sillytavern_context
         return session
 
     def _handle_reload_mcp(self, frame: dict[str, Any]) -> None:

@@ -408,6 +408,14 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
     old_agent = session.get("agent")
     profile_home = session.get("profile_home")
     session_db = getattr(old_agent, "_session_db", None)
+    if "sillytavern_context" in kwargs:
+        prompt_context = _sillytavern_prompt_context(kwargs["sillytavern_context"])
+        if prompt_context is None:
+            kwargs.pop("sillytavern_context")
+        else:
+            kwargs["sillytavern_context"] = prompt_context
+    elif prompt_context := _sillytavern_prompt_context(session.get("sillytavern_context")):
+        kwargs["sillytavern_context"] = prompt_context
     # No live agent to inherit from (rebuild before the deferred build ran): open the profile's store the
     # same FAIL-CLOSED way _start_agent_build does rather than letting _make_agent reach for the launch db.
     opened = session_db is None and bool(profile_home)

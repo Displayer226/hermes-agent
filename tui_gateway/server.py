@@ -98,6 +98,32 @@ _cfg_path = None
 _session_resume_lock = threading.Lock()
 _SLASH_WORKER_TIMEOUT_S = max(5.0, env_float("HERMES_TUI_SLASH_TIMEOUT_S", 45.0))
 
+_SILLYTAVERN_CONTEXT_KEYS = (
+    "system_context", "persona_context", "persona_reminder", "persona_version")
+_SILLYTAVERN_PROMPT_CONTEXT_KEYS = (
+    "system_context", "persona_context", "persona_reminder")
+
+
+def _normalize_sillytavern_context(value: Any) -> dict[str, str] | None:
+    """Normalize optional bridge context without exposing its values to diagnostics."""
+    if not isinstance(value, dict):
+        return None
+    context = {
+        key: raw_value if isinstance(raw_value := value.get(key), str) else ""
+        for key in _SILLYTAVERN_CONTEXT_KEYS
+    }
+    return context if any(context.values()) else None
+
+
+def _sillytavern_prompt_context(value: Any) -> dict[str, str] | None:
+    """Return only the text fields accepted by ``_make_agent``."""
+    context = _normalize_sillytavern_context(value)
+    if context is None:
+        return None
+    prompt_context = {key: context[key] for key in _SILLYTAVERN_PROMPT_CONTEXT_KEYS}
+    return prompt_context if any(prompt_context.values()) else None
+
+
 def _ws_orphan_setting(env_var: str, cfg_key: str, default: float) -> float:
     """``dashboard.<cfg_key>`` seconds; the env var is an internal override that wins when set."""
     raw = os.environ.get(env_var)
@@ -987,7 +1013,7 @@ def _deferred_build_agent_kwargs(current: dict, session_db) -> dict:
     stored runtime, or an unroutable provider → this session's picked model/effort/tier, else the default."""
     kw = {"session_db": session_db, "context_cwd_is_launch_artifact": _context_cwd_is_launch_artifact(current),
           "platform_override": _session_source(current)}
-    if sillytavern_context := current.get("sillytavern_context"):
+    if sillytavern_context := _sillytavern_prompt_context(current.get("sillytavern_context")):
         kw["sillytavern_context"] = sillytavern_context
     if resume_sid := current.get("resume_session_id"):
         kw["session_id"] = resume_sid
@@ -2353,13 +2379,13 @@ def _make_agent(
             ("persona_context", "SillyTavern combined character and user context"),
             ("persona_reminder", "SillyTavern persona reminder"),
         ):
-            value = str(sillytavern_context.get(context_key) or "").strip()
-            if value:
+            value = sillytavern_context.get(context_key)
+            if isinstance(value, str) and value:
                 bridge_parts.append(f"[{heading}]\n{value}")
         if bridge_parts:
             system_prompt = "\n\n".join(
                 part for part in (system_prompt, *bridge_parts) if part
-            ).strip()
+            )
     model, runtime = _resolve_agent_model_runtime(model_override, provider_override)
     _pr = _load_provider_routing()
     platform = _resolve_agent_platform(platform_override)
