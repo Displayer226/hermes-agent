@@ -333,7 +333,7 @@ def _(rid, params: dict) -> dict:
     # SillyTavern provides this once with the seed transcript. Keep it on the
     # session so prompt construction is stable for the session lifetime.
     sillytavern_context = {
-        key: str(params.get(key) or "").strip()
+        key: raw_value if isinstance(raw_value := params.get(key), str) else ""
         for key in ("system_context", "persona_context", "persona_reminder", "persona_version")
     }
     now = time.time()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import threading
 import time
 import types
@@ -260,10 +261,144 @@ def test_host_builds_the_session_agent_with_the_frame_login(monkeypatch):
     monkeypatch.setattr(server, "_init_session", fake_init_session)
     server._sessions.pop("s-login", None)
 
+    context = {
+        "system_context": "\n  synthetic system  \n",
+        "persona_context": "  synthetic persona\n",
+        "persona_reminder": "\nsynthetic reminder  ",
+        "persona_version": " version-1 ",
+    }
     session = host._build_server_session(
-        server, {"sid": "s-login", "session_key": "login-key", "history": [], "auth_user_id": "basic:alice"},
+        server,
+        {
+            "sid": "s-login", "session_key": "login-key", "history": [], "auth_user_id": "basic:alice",
+            "sillytavern_context": context,
+        },
         "s-login")
 
     assert captured["auth_user_id"] == "basic:alice"
+    assert captured["sillytavern_context"] == {
+        "system_context": "\n  synthetic system  \n",
+        "persona_context": "  synthetic persona\n",
+        "persona_reminder": "\nsynthetic reminder  ",
+    }
     assert session["auth_user_id"] == "basic:alice"
+    assert session["sillytavern_context"] == context
     assert server._session_auth_user_id(session) == "basic:alice"
+
+
+def test_host_accepts_legacy_frame_without_sillytavern_context(monkeypatch):
+    host = ComputeHost(stdout=io.StringIO(), heartbeat_secs=0)
+    captured = {}
+
+    def fake_make_agent(sid, key, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(session_id=key)
+
+    def fake_init_session(sid, key, agent, history, **kwargs):
+        monkeypatch.setitem(server._sessions, sid, {"agent": agent, "session_key": key})
+
+    monkeypatch.setattr(server, "_make_agent", fake_make_agent)
+    monkeypatch.setattr(server, "_transfer_db_to_agent", lambda agent, db: False)
+    monkeypatch.setattr(server, "_init_session", fake_init_session)
+    server._sessions.pop("s-legacy", None)
+    try:
+        session = host._build_server_session(
+            server, {"sid": "s-legacy", "session_key": "legacy-key", "history": []}, "s-legacy")
+        assert "sillytavern_context" not in captured
+        assert "sillytavern_context" not in session
+    finally:
+        server._sessions.pop("s-legacy", None)
+        host.close()
+
+
+def test_host_recreates_sillytavern_context_after_child_session_respawn(monkeypatch):
+    host = ComputeHost(stdout=io.StringIO(), heartbeat_secs=0)
+    captured = []
+    context = {
+        "system_context": "\n  synthetic system  \n",
+        "persona_context": "  synthetic persona\n",
+        "persona_reminder": "\nsynthetic reminder  ",
+        "persona_version": " version-1 ",
+    }
+
+    def fake_make_agent(sid, key, **kwargs):
+        captured.append(kwargs.get("sillytavern_context"))
+        return types.SimpleNamespace(session_id=key)
+
+    def fake_init_session(sid, key, agent, history, **kwargs):
+        monkeypatch.setitem(server._sessions, sid, {"agent": agent, "session_key": key})
+
+    monkeypatch.setattr(server, "_make_agent", fake_make_agent)
+    monkeypatch.setattr(server, "_transfer_db_to_agent", lambda agent, db: False)
+    monkeypatch.setattr(server, "_init_session", fake_init_session)
+    frame = {"sid": "s-respawn", "session_key": "respawn-key", "history": [], "sillytavern_context": context}
+    server._sessions.pop("s-respawn", None)
+    try:
+        first = host._build_server_session(server, frame, "s-respawn")
+        server._sessions.pop("s-respawn", None)
+        second = host._build_server_session(server, frame, "s-respawn")
+        assert captured == [
+            {
+                "system_context": "\n  synthetic system  \n",
+                "persona_context": "  synthetic persona\n",
+                "persona_reminder": "\nsynthetic reminder  ",
+            },
+            {
+                "system_context": "\n  synthetic system  \n",
+                "persona_context": "  synthetic persona\n",
+                "persona_reminder": "\nsynthetic reminder  ",
+            },
+        ]
+        assert first["sillytavern_context"] == context
+        assert second["sillytavern_context"] == context
+    finally:
+        server._sessions.pop("s-respawn", None)
+        host.close()
+
+
+def test_compute_host_context_values_are_not_logged(monkeypatch, caplog):
+    host = ComputeHost(stdout=io.StringIO(), heartbeat_secs=0)
+    captured = {}
+    invalid_list = ["synthetic-list-value"]
+    invalid_dict = {"version": "synthetic-dict-value"}
+    context = {
+        "system_context": invalid_list,
+        "persona_context": "  synthetic persona\n",
+        "persona_reminder": "\nsynthetic reminder  ",
+        "persona_version": invalid_dict,
+    }
+    monkeypatch.setattr(
+        server,
+        "_make_agent",
+        lambda *args, **kwargs: (captured.update(kwargs) or types.SimpleNamespace(session_id=args[1])),
+    )
+    monkeypatch.setattr(server, "_transfer_db_to_agent", lambda agent, db: False)
+    monkeypatch.setattr(
+        server, "_init_session",
+        lambda sid, key, agent, history, **kwargs: monkeypatch.setitem(
+            server._sessions, sid, {"agent": agent, "session_key": key}),
+    )
+    server._sessions.pop("s-redacted", None)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            host._build_server_session(
+                server,
+                {"sid": "s-redacted", "session_key": "redacted-key", "history": [],
+                 "sillytavern_context": context},
+                "s-redacted")
+        assert captured["sillytavern_context"] == {
+            "system_context": "",
+            "persona_context": "  synthetic persona\n",
+            "persona_reminder": "\nsynthetic reminder  ",
+        }
+        assert server._sessions["s-redacted"]["sillytavern_context"] == {
+            "system_context": "",
+            "persona_context": "  synthetic persona\n",
+            "persona_reminder": "\nsynthetic reminder  ",
+            "persona_version": "",
+        }
+        assert "synthetic-list-value" not in caplog.text
+        assert "synthetic-dict-value" not in caplog.text
+    finally:
+        server._sessions.pop("s-redacted", None)
+        host.close()
