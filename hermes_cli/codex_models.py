@@ -13,17 +13,19 @@ logger = logging.getLogger(__name__)
 
 # Curated offline fallback (first-run, transient API failure). Only slugs the ChatGPT Codex
 # OAuth backend actually accepts: the public API's "-pro" variants and the retired
-# gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini return HTTP 400 there ("not supported
+# gpt-5.3-codex / gpt-5.2-codex / gpt-5.1-codex-max / gpt-5.1-codex-mini return HTTP 400 there ("not supported
 # when using Codex with a ChatGPT account"), so listing them leaked dead picker choices. If
 # OpenAI re-enables any, live discovery (_fetch_models_from_api) picks them up automatically.
 DEFAULT_CODEX_MODELS: List[str] = [
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4-mini",
     "gpt-5.4",
-    "gpt-5.3-codex",
     # Research preview exposed ONLY via the Codex OAuth backend for ChatGPT Pro subscribers —
     # not in the public API, so it stays out of the "openai" catalog in hermes_cli/models.py.
     # The backend reports ``supported_in_api: false`` for it; that flag describes API
@@ -39,6 +41,11 @@ DEFAULT_CODEX_MODELS: List[str] = [
 # unsupported — that was wrong; restored here. Keep it in the curated fallback so Pro users still see Spark
 # in `/model` when live discovery is unavailable (offline first run, transient API failure).
 _FORWARD_COMPAT_TEMPLATE_MODELS: List[tuple[str, tuple[str, ...]]] = [
+    # Offline/legacy catalogs may lack the GPT-6 descendants. Current account discovery uses
+    # the newest client version; the backend still decides access to synthesized entries.
+    ("gpt-6-luna", ("gpt-5.6-luna", "gpt-6-astra")),
+    ("gpt-6-sol", ("gpt-5.6-sol", "gpt-6-astra")),
+    ("gpt-6.1-sol", ("gpt-6-sol",)),
     ("gpt-5.6-sol", ("gpt-5.5", "gpt-5.4")),
     ("gpt-5.6-terra", ("gpt-5.5", "gpt-5.4")),
     ("gpt-5.6-luna", ("gpt-5.5", "gpt-5.4")),
@@ -60,10 +67,16 @@ def _add_forward_compat_models(model_ids: List[str]) -> List[str]:
     present (Clawdbot-style synthetic forward-compat catalog)."""
     ordered = _dedupe(model_ids)
     seen = set(ordered)
-    for synthetic_model, template_models in _FORWARD_COMPAT_TEMPLATE_MODELS:
-        if synthetic_model not in seen and any(template in seen for template in template_models):
-            ordered.append(synthetic_model)
-            seen.add(synthetic_model)
+    # Resolve template chains independently of their declaration order.
+    while True:
+        added = False
+        for synthetic_model, template_models in _FORWARD_COMPAT_TEMPLATE_MODELS:
+            if synthetic_model not in seen and any(template in seen for template in template_models):
+                ordered.append(synthetic_model)
+                seen.add(synthetic_model)
+                added = True
+        if not added:
+            break
     return ordered
 
 
@@ -155,12 +168,10 @@ def _fetch_models_from_api(access_token: str) -> List[str]:
         acct_id = _extract_chatgpt_account_id(access_token)
         if acct_id:
             headers["ChatGPT-Account-Id"] = acct_id
-        from agent.model_metadata import CODEX_MODELS_CATALOG_URL
-        resp = httpx.get(CODEX_MODELS_CATALOG_URL, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        entries = data.get("models", []) if isinstance(data, dict) else []
+        from agent.model_metadata import fetch_codex_catalog_entries
+        entries, _status = fetch_codex_catalog_entries(
+            lambda url: httpx.get(url, headers=headers, timeout=10)
+        )
     except Exception as exc:
         logger.debug("Failed to fetch Codex models from API: %s", exc)
         return []

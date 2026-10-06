@@ -271,10 +271,8 @@ class TestNormalizeModelForProvider:
         assert cli.model == "gpt-5.3-codex"
 
 
-def test_catalog_requests_use_ungated_client_version(monkeypatch):
-    """Both catalog request sites send the backend's ungated ``0.0.0`` sentinel: the endpoint
-    hides models whose ``minimal_client_version`` is newer than ``client_version``, so a
-    made-up version silently drops future models."""
+def test_catalog_requests_try_newest_client_then_legacy_on_empty(monkeypatch):
+    """Both callers try the current catalog before falling back to the legacy sentinel."""
     import sys
     from urllib.parse import parse_qs, urlparse
 
@@ -308,8 +306,48 @@ def test_catalog_requests_use_ungated_client_version(monkeypatch):
     monkeypatch.setattr(model_metadata, "_codex_oauth_context_cache", {})
     model_metadata._fetch_codex_oauth_context_lengths_with_source("tok")
 
-    assert len(seen_urls) == 2
-    for url in seen_urls:
+    assert len(seen_urls) == 4
+    for index, url in enumerate(seen_urls):
         parsed = urlparse(url)
         assert parsed.netloc == "chatgpt.com" and parsed.path == "/backend-api/codex/models"
-        assert parse_qs(parsed.query)["client_version"] == ["0.0.0"]
+        versions = (model_metadata.CODEX_NEWEST_CLIENT_VERSION, model_metadata.CODEX_UNGATED_CLIENT_VERSION)
+        assert parse_qs(parsed.query)["client_version"] == [versions[index % 2]]
+
+
+def test_nonempty_newest_catalog_does_not_query_legacy():
+    from agent.model_metadata import CODEX_MODELS_CATALOG_URLS, fetch_codex_catalog_entries
+
+    requested = []
+    entries = [{"slug": "gpt-6.1-sol"}]
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"models": entries}
+
+    def get(url):
+        requested.append(url)
+        return Response()
+
+    assert fetch_codex_catalog_entries(get) == (entries, 200)
+    assert requested == [CODEX_MODELS_CATALOG_URLS[0]]
+
+
+def test_forward_compat_template_chains_are_order_independent(monkeypatch):
+    from hermes_cli import codex_models
+
+    templates = [("newest", ("newer",)), ("newer", ("old",))]
+    monkeypatch.setattr(codex_models, "_FORWARD_COMPAT_TEMPLATE_MODELS", templates)
+    forward = codex_models._add_forward_compat_models(["old"])
+    monkeypatch.setattr(codex_models, "_FORWARD_COMPAT_TEMPLATE_MODELS", list(reversed(templates)))
+    reverse = codex_models._add_forward_compat_models(["old"])
+    assert set(forward) == set(reverse) == {"old", "newer", "newest"}
+    assert len(forward) == len(set(forward))
+
+
+def test_old_catalog_can_surface_gpt6_descendants():
+    from hermes_cli.codex_models import _finalize_codex_models
+
+    models = _finalize_codex_models(["gpt-5.4"])
+    assert {"gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"}.issubset(models)

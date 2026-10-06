@@ -334,6 +334,7 @@ DEFAULT_CONTEXT_LENGTHS = {
     # its own branch). 5.4-nano/-mini are 400k, not 1.05M; gpt-5.3-codex-spark is
     # Codex-OAuth-only and listed so "gpt-5" (400k) doesn't win.
     "gpt-6-astra": 1050000,  # also matches -pro (verified live on OpenRouter)
+    "gpt-6.1-sol": 1050000, "gpt-6-sol": 1050000, "gpt-6-luna": 1050000,  # models.dev 2026-10-05
     "gpt-5.6-luna": 1050000, "gpt-5.6-terra": 1050000, "gpt-5.6-sol": 1050000, "gpt-5.5": 1050000,
     "gpt-5.4-nano": 400000, "gpt-5.4-mini": 400000, "gpt-5.4": 1050000,
     "gpt-5.3-codex-spark": 128000, "gpt-5.1-chat": 128000, "gpt-5": 400000,
@@ -1514,6 +1515,7 @@ def _query_anthropic_context_length(model: str, base_url: str, api_key: str) -> 
 # slugs). Fallback when the live probe fails; longest-key-first. gpt-5.3-codex-spark is listed so "gpt-5.3-codex" doesn't win.
 _CODEX_OAUTH_CONTEXT_FALLBACK: Dict[str, int] = {
     "gpt-6-astra": 272_000,
+    "gpt-6.1-sol": 272_000, "gpt-6-sol": 272_000, "gpt-6-luna": 272_000,
     "gpt-5.1-codex-max": 272_000, "gpt-5.1-codex-mini": 272_000, "gpt-5.3-codex": 272_000,
     "gpt-5.3-codex-spark": 128_000, "gpt-5.2-codex": 272_000, "gpt-5.4-mini": 272_000,
     "gpt-5.6-sol": 272_000, "gpt-5.6-terra": 272_000, "gpt-5.6-luna": 272_000, "gpt-daybreak-blue-latest": 272_000,
@@ -1596,12 +1598,31 @@ def _verified_codex_ctx_for_slug(model_bare: str) -> Optional[int]:
 _codex_oauth_context_cache: Dict[str, Tuple[Dict[str, int], float]] = {}
 _CODEX_OAUTH_CONTEXT_CACHE_TTL = 3600  # 1 hour
 # The Codex models endpoint reads ``client_version`` as a Codex CLI compatibility version and
-# hides models whose ``minimal_client_version`` is newer, so a made-up version (the old
-# "1.0.0") silently drops future models. "0.0.0" is the backend's ungated sentinel returning
-# the full account catalog; other out-of-sequence values return an empty catalog and omitting
-# the parameter is HTTP 400.
+# hides models whose ``minimal_client_version`` is newer. The old ``0.0.0`` sentinel now
+# returns a frozen legacy list. Ask as the newest client and retry the sentinel if needed.
+# Backported from upstream 1d10cef836 by teknium1 (#119412).
+CODEX_MODELS_CATALOG_ENDPOINT = "https://chatgpt.com/backend-api/codex/models"
+CODEX_NEWEST_CLIENT_VERSION = "99.0.0"
 CODEX_UNGATED_CLIENT_VERSION = "0.0.0"
-CODEX_MODELS_CATALOG_URL = f"https://chatgpt.com/backend-api/codex/models?client_version={CODEX_UNGATED_CLIENT_VERSION}"
+CODEX_MODELS_CATALOG_URLS = tuple(
+    f"{CODEX_MODELS_CATALOG_ENDPOINT}?client_version={v}"
+    for v in (CODEX_NEWEST_CLIENT_VERSION, CODEX_UNGATED_CLIENT_VERSION)
+)
+
+
+def fetch_codex_catalog_entries(get: Callable[[str], Any]) -> Tuple[List[Any], Optional[int]]:
+    """Return the first non-empty catalog, falling back for an empty/non-200 newest-client reply."""
+    status: Optional[int] = None
+    for url in CODEX_MODELS_CATALOG_URLS:
+        resp = get(url)
+        status = resp.status_code
+        if status != 200:
+            continue
+        data = resp.json()
+        entries = data.get("models") if isinstance(data, dict) else None
+        if isinstance(entries, list) and entries:
+            return entries, status
+    return [], status
 
 
 def _codex_oauth_token_fingerprint(access_token: str) -> str:
@@ -1637,16 +1658,17 @@ def _fetch_codex_oauth_context_lengths_with_source(access_token: str) -> Tuple[D
         headers["ChatGPT-Account-Id"] = acct_id
     try:
         _ensure_requests()
-        resp = requests.get(CODEX_MODELS_CATALOG_URL, headers=headers, timeout=(5, 10), verify=_resolve_requests_verify())
-        if resp.status_code != 200:
-            logger.debug("Codex /models probe returned HTTP %s; falling back to hardcoded defaults", resp.status_code)
+        entries, status = fetch_codex_catalog_entries(
+            lambda url: requests.get(url, headers=headers, timeout=(5, 10), verify=_resolve_requests_verify())
+        )
+        if status != 200:
+            logger.debug("Codex /models probe returned HTTP %s; falling back to hardcoded defaults", status)
             return {}, False
-        data = resp.json()
     except Exception as exc:
         logger.debug("Codex /models probe failed: %s", exc)
         return {}, False
     result: Dict[str, int] = {}
-    for item in data.get("models", []) if isinstance(data, dict) else []:
+    for item in entries:
         slug, ctx = (item.get("slug"), item.get("context_window")) if isinstance(item, dict) else (None, None)
         if isinstance(slug, str) and isinstance(ctx, int) and ctx > 0:
             result[slug.strip()] = ctx

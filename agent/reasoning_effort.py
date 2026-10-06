@@ -28,12 +28,15 @@ EFFORT_LADDER: tuple[str, ...] = ("none", "minimal", "low", "medium", "high", "x
 OPENAI_COMPAT_WIRE_EFFORTS: tuple[str, ...] = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 #: OpenAI/Codex Responses per model generation (live-verified): ``minimal`` is rejected by
-#: both (clamps to low); ``max`` is gpt-5.6-only.
+#: both (clamps to low); ``max`` is gpt-5.6/gpt-6-only.
 CODEX_GPT56_EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high", "xhigh", "max")
 CODEX_LEGACY_EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high", "xhigh")
 # GPT-6 Astra is account-gated and its Responses API accepts no disable/minimal
 # wire level; callers normalize those requests to ``low`` at the transport boundary.
 CODEX_ASTRA_EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+# GPT-6.1 Responses rejects ``none``/``minimal`` exactly like Astra (live-verified 2026-10-05
+# on the Codex OAuth backend); the gpt-6- generation keeps the GPT-5.6 vocabulary below.
+CODEX_GPT61_EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 ASTRA_MODEL_IDS: frozenset[str] = frozenset({"gpt-6-astra", "gpt-6-astra-900k"})
 DAYBREAK_MODEL_IDS: frozenset[str] = frozenset(
     {"gpt-daybreak-blue-latest", "gpt-daybreak-blue-latest-900k"}
@@ -97,9 +100,11 @@ def codex_supported_efforts(model: Optional[str]) -> tuple[str, ...]:
     if is_astra_model(model):
         return CODEX_ASTRA_EFFORTS
     bare = (model or "").strip().lower().rsplit("/", 1)[-1]
+    if bare.startswith("gpt-6.1"):
+        return CODEX_GPT61_EFFORTS
     return (
         CODEX_GPT56_EFFORTS
-        if "gpt-5.6" in bare or bare in DAYBREAK_MODEL_IDS
+        if "gpt-5.6" in bare or bare in DAYBREAK_MODEL_IDS or bare.startswith("gpt-6-")
         else CODEX_LEGACY_EFFORTS
     )
 

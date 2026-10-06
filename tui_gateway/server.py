@@ -2278,6 +2278,9 @@ def _resolve_agent_model_runtime(model_override, provider_override) -> tuple[str
     runtime) wins over global config/env. Older rows stored the resolved provider "custom" (no named entry
     matches) — recover the identity from the persisted base_url or the rebuild fails "No LLM provider
     configured". Persisted base_url/api_key/api_mode are honored only for the original runtime, never a fallback."""
+    from tui_gateway.model_startup import resolve_session_model_alias
+
+    model_override = resolve_session_model_alias(model_override, provider_override)
     if isinstance(model_override, dict) and model_override.get("model"):
         model = str(model_override.get("model") or "")
         requested_provider = model_override.get("provider") or provider_override or None
