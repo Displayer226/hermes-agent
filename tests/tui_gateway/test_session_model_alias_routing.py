@@ -5,6 +5,8 @@ import json
 import pytest
 import yaml
 
+from tui_gateway.methods_session_model_guard import create_overrides
+
 from tui_gateway import server
 
 
@@ -33,7 +35,7 @@ def profile(tmp_path, monkeypatch):
 @pytest.mark.parametrize("model", ("gpt-6-luna", "gpt-6.1-sol"))
 def test_proxy_session_create_model_reaches_codex(profile, model):
     # Exact shape produced by the proxy's session.create({model: ...}) request.
-    override, _, _ = server._create_overrides({"model": model})
+    override, _, _ = create_overrides({"model": model})
     assert override["provider"] is None
     selected, runtime = server._resolve_agent_model_runtime(override, None)
     assert selected == model
@@ -62,7 +64,7 @@ def test_unpinned_alias_drops_stale_endpoint_and_credential(profile):
 
 
 def test_local_model_only_session_keeps_profile_endpoint(profile):
-    override, _, _ = server._create_overrides({"model": "gemma4-12b"})
+    override, _, _ = create_overrides({"model": "gemma4-12b"})
     model, runtime = server._resolve_agent_model_runtime(override, None)
     assert model == "gemma4-12b"
     assert runtime["base_url"] == profile["model"]["base_url"]
