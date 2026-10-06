@@ -3,7 +3,7 @@
 import json
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 from tui_gateway.methods_session_model_guard import create_overrides
 
