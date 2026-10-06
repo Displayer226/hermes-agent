@@ -27,6 +27,7 @@ Contract under test:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +42,7 @@ def home(tmp_path, monkeypatch):
     h = tmp_path / ".hermes"
     (h / "profiles" / "ops").mkdir(parents=True)
     monkeypatch.setenv("HERMES_HOME", str(h))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     return h
 
 
