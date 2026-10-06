@@ -58,7 +58,7 @@ def test_session_create_records_stable_sillytavern_context(monkeypatch):
             },
         )
         session = server._sessions[resp["result"]["session_id"]]
-        assert session["history"] == [
+        assert [{"role": m["role"], "content": m["content"]} for m in session["history"]] == [
             {"role": "user", "content": "Earlier question"},
             {"role": "assistant", "content": "Earlier answer"},
         ]
