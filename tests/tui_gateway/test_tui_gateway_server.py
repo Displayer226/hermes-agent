@@ -216,7 +216,6 @@ def test_handoff_fail_marks_only_inflight_rows(monkeypatch):
 
 
 
-
 def test_dashboard_process_isolation_config_coerces_raw_values():
     cfg = {
         "dashboard": {
@@ -238,7 +237,6 @@ def test_dashboard_process_isolation_config_coerces_raw_values():
         "compute_host_heartbeat_secs": 15,
         "compute_host_respawn_max": 3,
     }
-
 
 
 
@@ -1507,7 +1505,6 @@ def test_usage_ticker_unbounded_join_waits_out_blocked_emit(monkeypatch):
 
 
 
-
 def test_tui_verbose_tool_details_fail_closed_when_redaction_fails(monkeypatch):
     redact_module = types.ModuleType("agent.redact")
 
@@ -1663,7 +1660,6 @@ def test_dispatch_rejects_non_object_params():
 
 
 
-
 def test_system_battery_fails_open(monkeypatch):
     def boom():
         raise RuntimeError("no battery subsystem")
@@ -1743,7 +1739,6 @@ def test_voice_toggle_returns_configured_record_key(monkeypatch):
 
     assert on_resp["result"]["record_key"] == "ctrl+o"
     assert status_resp["result"]["record_key"] == "ctrl+o"
-
 
 
 
@@ -1944,7 +1939,6 @@ def test_prompt_submit_typed_stop_passes_through_when_voice_off(monkeypatch):
     # The submit proceeds into normal handling (here: unknown session error),
     # NOT the voice_stopped consumption path.
     assert resp.get("result") != {"voice_stopped": True}
-
 
 
 
@@ -2211,7 +2205,6 @@ def test_wake_toggle_persists_enabled_flag_only_on_explicit_gesture(monkeypatch)
     finally:
         server._wake_owner_transport = None
         server._wake_owner_surface = ""
-
 
 
 
@@ -2638,7 +2631,6 @@ def test_load_disabled_toolsets_none_when_unset_or_config_fails(monkeypatch):
 
 
 
-
 def test_load_enabled_toolsets_reports_disabled_mcp_separately(monkeypatch, capsys):
     monkeypatch.setenv("HERMES_TUI_TOOLSETS", "web,mcp-off,nope")
     monkeypatch.setitem(
@@ -2850,7 +2842,6 @@ def test_tool_start_ships_full_args(monkeypatch):
     assert events[0][2]["args"] == {"command": long_command}
     # Empty args stay omitted. Argless tools get no noise key.
     assert "args" not in events[1][2]
-
 
 
 
@@ -3367,7 +3358,6 @@ def test_session_resume_uses_parent_lineage_for_display(monkeypatch, omit_messag
     assert resp["result"]["messages"] == expected
     assert resp["result"]["message_count"] == (1 if omit_messages else 2)
     assert resp["result"]["messages_omitted"] is omit_messages
-
 
 
 
@@ -4497,7 +4487,6 @@ def test_config_sync_ignores_env_seed_without_config_model(monkeypatch):
 
 
 
-
 def test_apply_model_switch_persist_override_false_never_persists(monkeypatch):
     # Internal callers (config sync, /moa one-shot + restore) pass
     # persist_override=False; even with persist_switch_by_default=True the
@@ -4558,7 +4547,6 @@ def test_startup_runtime_does_not_treat_inference_provider_as_explicit(monkeypat
     )
 
     assert server._resolve_startup_runtime() == ("nous/hermes-test", None)
-
 
 
 
@@ -4778,33 +4766,7 @@ def test_compute_host_turn_frame_carries_the_session_login(monkeypatch):
     assert frame["auth_user_id"] == "basic:alice"
 
 
-def test_compute_host_turn_frame_carries_exact_sillytavern_context(monkeypatch):
-    context = {
-        "system_context": "\n  synthetic system  \n",
-        "persona_context": "  synthetic persona\n",
-        "persona_reminder": "\nsynthetic reminder  ",
-        "persona_version": " version-1 ",
-    }
-    record = _session(
-        agent=None, session_key="host-key", history=[], history_lock=threading.Lock(),
-        cwd="/tmp", cols=80, sillytavern_context=context)
-    monkeypatch.setattr(server, "_session_cwd", lambda session: "/tmp")
 
-    frame = server._compute_host_turn_frame("rid", "sid-host", record, "hello")
-
-    assert frame["sillytavern_context"] == context
-    assert set(frame["sillytavern_context"]) == {
-        "system_context", "persona_context", "persona_reminder", "persona_version"
-    }
-
-
-def test_compute_host_turn_frame_omits_context_for_ordinary_session(monkeypatch):
-    record = _session(agent=None, session_key="ordinary-key", history=[], history_lock=threading.Lock(), cwd="/tmp")
-    monkeypatch.setattr(server, "_session_cwd", lambda session: "/tmp")
-
-    frame = server._compute_host_turn_frame("rid", "sid-ordinary", record, "hello")
-
-    assert "sillytavern_context" not in frame
 
 
 def test_attaching_a_different_login_keeps_the_creator_and_warns_once(monkeypatch):
@@ -4817,7 +4779,6 @@ def test_attaching_a_different_login_keeps_the_creator_and_warns_once(monkeypatc
     assert server._attach_session_transport(record, other)
 
     assert server._session_auth_user_id(record) == "basic:alice"
-
 
 
 
@@ -5342,7 +5303,6 @@ def test_ws_disconnect_running_sidecar_still_closes_without_orphan_timer(monkeyp
         assert scheduled == []
     finally:
         server._sessions.pop("sidecar-sid", None)
-
 
 
 
@@ -5886,7 +5846,6 @@ def test_superseded_runtime_finalized_without_reclaimed_broadcast(monkeypatch):
         server._sessions.pop("new-sid", None)
         server._pending_ws_reaps.pop("old-sid", None)
         server._pending_ws_reaps.pop("new-sid", None)
-
 
 
 
@@ -8310,7 +8269,6 @@ def test_run_prompt_submit_prefers_origin_ui_session_id(monkeypatch, tmp_path):
         process_registry._completion_consumed.discard(event["session_id"])
 
 
-
     """session.create must NOT eagerly write a DB row.
 
     Every TUI/desktop launch opens a session here just to paint the composer;
@@ -9062,7 +9020,6 @@ def test_pet_info_known_revision_elides_spritesheet(monkeypatch):
 
 
 
-
 def test_config_set_approval_mode_rejects_unknown_value():
     resp = server.handle_request(
         {
@@ -9525,7 +9482,6 @@ def test_enable_gateway_prompts_sets_gateway_env(monkeypatch):
 
 
 
-
 def test_setup_status_answers_from_the_bootstrap_record_once_it_exists(monkeypatch):
     """Under ``hermes serve`` the boot bootstrap owns the free-tier identity; ``setup.status`` reports
     its record (blocking for it while it is in flight) instead of re-probing, so a client's first poll
@@ -9866,7 +9822,6 @@ def test_setup_readiness_unknown_profile_never_answers_for_launch_profile(monkey
 
 
 
-
 def test_complete_slash_returns_plain_string_fields():
     # prompt_toolkit hands us FormattedText (a list subclass) for
     # display/display_meta; the TUI's CompletionItem contract is plain
@@ -9885,7 +9840,6 @@ def test_complete_slash_returns_plain_string_fields():
     for item in items:
         assert isinstance(item["display"], str), item
         assert isinstance(item["meta"], str), item
-
 
 
 
@@ -9910,7 +9864,6 @@ def test_complete_slash_details_args():
     assert any(item["text"] == " thinking" for item in resp_root["result"]["items"])
     assert any(item["text"] == "thinking" for item in resp_section["result"]["items"])
     assert any(item["text"] == "expanded" for item in resp_mode["result"]["items"])
-
 
 
 
@@ -10160,7 +10113,6 @@ def test_config_set_verbose_updates_session_mode_and_agent(tmp_path, monkeypatch
     assert agent.verbose_logging is True
 
 
-
 def test_config_set_model_waits_for_lazy_agent_before_switch(monkeypatch):
     """A model switch against a lazy-created live session must apply to the
     real agent, not just process env, before the prompt is dispatched.
@@ -10201,7 +10153,6 @@ def test_config_set_model_waits_for_lazy_agent_before_switch(monkeypatch):
         assert calls == [("start", "sid"), ("apply", "sid", agent, "new/model")]
     finally:
         server._sessions.pop("sid", None)
-
 
 
 def test_config_set_model_requires_confirmation_for_expensive_model(monkeypatch):
@@ -12223,7 +12174,6 @@ def test_commands_catalog_survives_an_unreadable_usage_sidecar(monkeypatch):
 
 
 
-
 def test_commands_catalog_has_no_duplicate_or_alias_colliding_names():
     """No command may be advertised twice, and no advertised command may
     shadow an alias of a different command (e.g. the historical /compact
@@ -12484,8 +12434,6 @@ def test_command_dispatch_exec_nonzero_surfaces_error(monkeypatch):
 
     assert "error" in resp
     assert "failed" in resp["error"]["message"]
-
-
 
 
 
@@ -13174,7 +13122,6 @@ def test_session_redirect_rejects_when_idle_without_agent(monkeypatch):
 
     assert resp["error"]["code"] == 4010
     assert session.get("queued_prompt") is None
-
 
 
 
@@ -15213,7 +15160,6 @@ def test_apply_pending_model_switch_runs_queued_pick(monkeypatch):
 
 
 
-
 def test_mirror_slash_side_effects_rejects_mutating_commands_while_running(monkeypatch):
     """Slash worker passthrough (e.g. /model, /personality, /prompt,
     /compress) must reject during an in-flight turn.  Same race as
@@ -16107,7 +16053,6 @@ def test_session_delete_success_returns_deleted_id(monkeypatch):
     # /sessions to it.
     assert captured["sessions_dir"] is not None
     assert str(captured["sessions_dir"]).endswith("sessions")
-
 
 
 
@@ -17312,7 +17257,6 @@ def test_session_branch_uses_persisted_display_history_after_compaction(monkeypa
 
 
 
-
 # --------------------------------------------------------------------------
 # model.options — curated-list parity with `hermes model` and classic /model
 # --------------------------------------------------------------------------
@@ -17385,7 +17329,6 @@ def test_model_options_propagates_list_exception(monkeypatch):
     assert "error" in resp
     assert resp["error"]["code"] == 5033
     assert "catalog blew up" in resp["error"]["message"]
-
 
 
 
@@ -17547,7 +17490,6 @@ def test_model_save_key_reconciles_the_launch_profiles_stale_setup_record(monkey
 # ---------------------------------------------------------------------------
 # prompt.submit — auto-title
 # ---------------------------------------------------------------------------
-
 
 
 
@@ -17873,7 +17815,6 @@ def test_session_active_list_excludes_finalized_sessions(monkeypatch):
 
     session_rows = resp["result"]["sessions"]
     assert [row["id"] for row in session_rows] == ["sid-live"]
-
 
 
 def test_session_activate_returns_inflight_stream_before_completion(monkeypatch):
@@ -18350,7 +18291,6 @@ def test_browser_manage_use_swaps_the_profiles_browser_tools_for_new_agents(monk
     manage(action="use", enabled=False, profile="other")
     backend = lambda home: yaml.safe_load((home / "config.yaml").read_text())["browser"]["backend"]
     assert (backend(other_home), backend(get_hermes_home())) == ("off", "browser-use")
-
 
 
 
@@ -18936,7 +18876,6 @@ def test_browser_manage_disconnect_drops_env_and_cleans(monkeypatch):
 
 
 
-
 def test_config_get_indicator_normalizes_casing_and_whitespace(monkeypatch):
     """Hand-edited config.yaml stays consistent with what the TUI shows.
 
@@ -18965,7 +18904,6 @@ def test_config_get_indicator_falls_back_to_default_for_unknown(monkeypatch):
 
 
 
-
 # ── config.set indicator validation ──────────────────────────────────
 
 
@@ -18990,9 +18928,7 @@ def test_config_set_indicator_accepts_known_value(monkeypatch):
 
 
 
-
 # ── reload.env ───────────────────────────────────────────────────────
-
 
 
 
@@ -19046,7 +18982,6 @@ def test_make_agent_reads_nested_max_turns(monkeypatch):
 
 
 
-
 def test_make_agent_nested_max_turns_takes_priority(monkeypatch):
     _setup_make_agent_mocks(
         monkeypatch, {"agent": {"max_turns": 400}, "max_turns": 100}
@@ -19056,7 +18991,6 @@ def test_make_agent_nested_max_turns_takes_priority(monkeypatch):
         server._make_agent("sid1", "key1")
 
     assert mock_agent.call_args.kwargs["max_iterations"] == 400
-
 
 
 
@@ -19147,14 +19081,12 @@ def test_background_agent_kwargs_falls_back_to_root_max_turns(monkeypatch):
 
 
 
-
 def test_background_agent_kwargs_handles_null_agent_config(monkeypatch):
     monkeypatch.setattr(server, "_load_cfg", lambda: {"agent": None, "max_turns": 40})
 
     kwargs = server._background_agent_kwargs(_FakeAgentForBackground(), "task_1")
 
     assert kwargs["max_iterations"] == 40
-
 
 
 
@@ -19438,7 +19370,6 @@ def test_session_save_writes_under_hermes_home_with_system_prompt(monkeypatch, t
     assert payload["started_at"] == datetime(2026, 1, 1, 12, 0, 0).timestamp()
     assert payload["system_prompt"] == "You are Hermes."
     assert payload["messages"] == history
-
 
 
 def test_session_save_lands_in_the_sessions_own_profile_a_b_a(monkeypatch, tmp_path):
@@ -20036,7 +19967,6 @@ def test_slash_exec_concurrent_first_use_spawns_single_worker(monkeypatch):
 
 
 
-
 def test_close_sessions_for_transport_closes_flagged_repoints_rest(monkeypatch):
     seen = []
     monkeypatch.setattr(
@@ -20492,209 +20422,13 @@ def test_session_create_records_ui_model_as_session_override(monkeypatch):
         server._sessions.clear()
 
 
-def test_session_create_records_stable_sillytavern_context(monkeypatch):
-    monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
-    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
-    try:
-        resp = server._methods["session.create"](
-            "r1",
-            {
-                "source": "sillytavern",
-                "messages": [
-                    {"role": "user", "content": "Earlier question"},
-                    {"role": "assistant", "content": "Earlier answer"},
-                ],
-                "system_context": "\n  response contract  \n",
-                "persona_context": "  # ARIA\n",
-                "persona_reminder": "\nAnswer as ARIA.  ",
-                "persona_version": " persona-v1 ",
-            },
-        )
-        session = server._sessions[resp["result"]["session_id"]]
-        assert session["history"] == [
-            {"role": "user", "content": "Earlier question"},
-            {"role": "assistant", "content": "Earlier answer"},
-        ]
-        assert session["sillytavern_context"] == {
-            "system_context": "\n  response contract  \n",
-            "persona_context": "  # ARIA\n",
-            "persona_reminder": "\nAnswer as ARIA.  ",
-            "persona_version": " persona-v1 ",
-        }
-    finally:
-        server._sessions.clear()
 
 
-def test_session_create_contract_accepts_sillytavern_context(monkeypatch):
-    """JSON-RPC validation accepts bridge context but still rejects unknown fields."""
-    monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
-    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
-    context = {
-        "system_context": "response contract",
-        "persona_context": "# ARIA",
-        "persona_reminder": "Answer as ARIA.",
-        "persona_version": "persona-v1",
-    }
-    try:
-        response = server.handle_request(
-            {"id": "contract-create", "method": "session.create", "params": context}
-        )
-        assert response is not None
-        assert "error" not in response
-        session = server._sessions[response["result"]["session_id"]]
-        assert session["sillytavern_context"] == context
-
-        rejected = server.handle_request(
-            {
-                "id": "contract-unknown",
-                "method": "session.create",
-                "params": {"unknown_sillytavern_field": "nope"},
-            }
-        )
-        assert rejected is not None
-        assert rejected["error"]["code"] == 4000
-    finally:
-        server._sessions.clear()
 
 
-def test_make_agent_combines_sillytavern_context_with_config_prompt(monkeypatch):
-    captured = {}
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
-    monkeypatch.setattr(server, "_load_cfg", lambda: {"agent": {}})
-    monkeypatch.setattr(
-        "hermes_cli.config.resolve_ephemeral_system_prompt_from_config",
-        lambda _cfg: "configured prompt",
-    )
-    monkeypatch.setattr(server, "_resolve_startup_runtime", lambda: ("model", "provider"))
-    monkeypatch.setattr(
-        server,
-        "_resolve_runtime_with_fallback",
-        lambda _kwargs: server._RuntimeFallbackResolution(
-            {"provider": "provider", "base_url": "http://example", "api_key": "key"},
-            None,
-            False,
-        ),
-    )
-    monkeypatch.setattr(server, "_get_db", lambda: None)
-
-    server._make_agent(
-        "sid",
-        "key",
-        sillytavern_context={
-            "system_context": "\n  response contract  \n",
-            "persona_context": "  # ARIA\n",
-            "persona_reminder": "\nAnswer as ARIA.  ",
-            "persona_version": " persona-v1 ",
-        },
-    )
-
-    assert captured["ephemeral_system_prompt"] == (
-        "configured prompt\n\n"
-        "[SillyTavern bridge context]\n\n  response contract  \n\n\n"
-        "[SillyTavern combined character and user context]\n  # ARIA\n\n\n"
-        "[SillyTavern persona reminder]\n\nAnswer as ARIA.  "
-    )
-    assert " persona-v1 " not in captured["ephemeral_system_prompt"]
 
 
-def test_make_agent_ignores_non_string_sillytavern_context(monkeypatch, caplog):
-    captured = {}
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
-    monkeypatch.setattr(server, "_load_cfg", lambda: {"agent": {}})
-    monkeypatch.setattr(
-        "hermes_cli.config.resolve_ephemeral_system_prompt_from_config",
-        lambda _cfg: "configured prompt",
-    )
-    monkeypatch.setattr(server, "_resolve_startup_runtime", lambda: ("model", "provider"))
-    monkeypatch.setattr(
-        server,
-        "_resolve_runtime_with_fallback",
-        lambda _kwargs: server._RuntimeFallbackResolution(
-            {"provider": "provider", "base_url": "http://example", "api_key": "key"},
-            None,
-            False,
-        ),
-    )
-    monkeypatch.setattr(server, "_get_db", lambda: None)
-    invalid_list = ["synthetic-list-value"]
-    invalid_dict = {"version": "synthetic-dict-value"}
-
-    with caplog.at_level(logging.DEBUG):
-        server._make_agent(
-            "sid",
-            "key",
-            sillytavern_context={
-                "system_context": invalid_list,
-                "persona_context": "  valid persona\n",
-                "persona_reminder": "\nvalid reminder  ",
-                "persona_version": invalid_dict,
-            },
-        )
-
-    prompt = captured["ephemeral_system_prompt"]
-    assert "synthetic-list-value" not in prompt
-    assert "synthetic-dict-value" not in prompt
-    assert "  valid persona\n" in prompt
-    assert "\nvalid reminder  " in prompt
-    assert "synthetic-list-value" not in caplog.text
-    assert "synthetic-dict-value" not in caplog.text
-
-
-def test_rebuild_session_agent_preserves_sillytavern_context_without_prompt_version(monkeypatch):
-    captured = {}
-    context = {
-        "system_context": "\n  synthetic system  \n",
-        "persona_context": "  synthetic persona\n",
-        "persona_reminder": "\nsynthetic reminder  ",
-        "persona_version": " version-1 ",
-    }
-    new_agent = types.SimpleNamespace(model="test")
-    session = _session(agent=types.SimpleNamespace(), sillytavern_context=context)
-
-    def make_agent(*_args, **kwargs):
-        captured.update(kwargs)
-        return new_agent
-
-    monkeypatch.setattr(server, "_make_agent", make_agent)
-    monkeypatch.setattr(server, "_config_model_target", lambda: ("", ""))
-    monkeypatch.setattr(server, "_transfer_db_to_agent", lambda *_args: False)
-
-    server._rebuild_session_agent("sid", session, session_id=session["session_key"])
-
-    assert captured["sillytavern_context"] == {
-        "system_context": "\n  synthetic system  \n",
-        "persona_context": "  synthetic persona\n",
-        "persona_reminder": "\nsynthetic reminder  ",
-    }
-    assert session["sillytavern_context"] == context
-    assert " version-1 " not in str(captured["sillytavern_context"])
-
-
-def test_rebuild_session_agent_without_sillytavern_context_keeps_ordinary_kwargs(monkeypatch):
-    captured = {}
-    session = _session(agent=types.SimpleNamespace())
-
-    def make_agent(*_args, **kwargs):
-        captured.update(kwargs)
-        return types.SimpleNamespace(model="test")
-
-    monkeypatch.setattr(server, "_make_agent", make_agent)
-    monkeypatch.setattr(server, "_config_model_target", lambda: ("", ""))
-    monkeypatch.setattr(server, "_transfer_db_to_agent", lambda *_args: False)
-
-    server._rebuild_session_agent("sid", session, session_id=session["session_key"])
-
-    assert "sillytavern_context" not in captured
 
 
 @pytest.mark.parametrize("service_tier_override", ["priority", ""])
@@ -20988,7 +20722,6 @@ def test_subscription_change_requires_tier_or_cancel():
 
 
 
-
 def test_subscription_upgrade_echoes_status_and_idempotency(monkeypatch):
     import hermes_cli.nous_billing as nb
 
@@ -21089,7 +20822,6 @@ def test_get_usage_includes_active_subagents(monkeypatch):
     monkeypatch.setattr(ad_mod, "active_count", lambda: 4)
     usage = server._get_usage(_BareAgent())
     assert usage["active_subagents"] == 4
-
 
 
 
@@ -21825,7 +21557,6 @@ def test_build_persist_message_with_image_refs_appends_existing_paths(monkeypatc
 
 
 
-
 def test_build_persist_message_with_image_refs_skips_missing_paths(monkeypatch, tmp_path):
     """Only paths that still exist are persisted; a missing file must not
     inject a dangling @image ref into the transcript."""
@@ -21975,7 +21706,6 @@ def test_prompt_submit_passes_persist_user_message_to_agent(monkeypatch):
         assert captured.get("persist_user_message") == "hi"
     finally:
         server._sessions.pop("sid", None)
-
 
 
 
@@ -22481,7 +22211,6 @@ def test_prompt_submit_truncation_archives_instead_of_deleting(monkeypatch):
         assert captured.get("reject_active_turn_lease") is True
     finally:
         server._sessions.pop("archive-trunc-sid", None)
-
 
 
 

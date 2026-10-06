@@ -97,7 +97,7 @@ def _linked_worktree_git_mounts(host_cwd: str) -> list[str]:
     """
     dot_git = Path(host_cwd) / ".git"
     try:
-        line = dot_git.read_text(encoding="utf-8").splitlines()[0]
+        line = dot_git.read_text(encoding="utf-8-sig").splitlines()[0]
     except (OSError, IndexError, UnicodeDecodeError):
         return []
     if not line.startswith("gitdir: "):
@@ -108,7 +108,7 @@ def _linked_worktree_git_mounts(host_cwd: str) -> list[str]:
         gitdir = dot_git.parent / gitdir
     try:
         gitdir = gitdir.resolve(strict=True)
-        common_ref = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+        common_ref = (gitdir / "commondir").read_text(encoding="utf-8-sig").strip()
         common_dir = (gitdir / common_ref).resolve(strict=True)
         gitdir.relative_to(common_dir)
     except (OSError, ValueError, UnicodeDecodeError):

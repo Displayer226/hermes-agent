@@ -421,11 +421,6 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
         with _profile_build_scope(profile_home):
             profile_model, profile_provider = _config_model_target()
         composer_override_profile = {"model": profile_model, "provider": profile_provider}
-    # Preserve the SillyTavern persona for every runtime rebuild.
-    sillytavern_context = {
-        key: raw_value if isinstance(raw_value := params.get(key), str) else ""
-        for key in ("system_context", "persona_context", "persona_reminder", "persona_version")
-    }
     now = time.time()
     with _sessions_lock:
         _sessions[sid] = {
@@ -446,7 +441,8 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
             "follow_profile_config": _flag(params, "follow_profile_config"),
             "profile_home": str(profile_home) if profile_home is not None else None,
             "running": False, "session_key": key, "show_reasoning": _load_show_reasoning(), "source": source,
-            "sillytavern_context": sillytavern_context,
+            "sillytavern_context": {key: params.get(key) if isinstance(params.get(key), str) else ""
+                                   for key in ("system_context", "persona_context", "persona_reminder", "persona_version")},
             "slash_worker": None, "tool_progress_mode": _load_tool_progress_mode(), "tool_started_at": {},
             "transport": current_transport() or _stdio_transport,
             "auth_user_id": _transport_auth_user_id(current_transport())}
@@ -497,11 +493,9 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
                  "project": _project_info_for_cwd(cwd), "lazy": True, "desktop_contract": DESKTOP_BACKEND_CONTRACT,
                  "profile_name": _response_profile_name(profile)}})
 
-
 @method("session.create")
 def _(rid, params: dict) -> dict:
     return _create_session(rid, params)
-
 
 @method("session.branch_stored")
 def _(rid, params: dict) -> dict:
