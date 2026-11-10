@@ -581,7 +581,8 @@ async def auth_native_refresh(request: Request, body: _NativeRefreshBody):
             refresh_session_coalesced, body.refresh_token, body.provider,
             phase="native refresh", log=_log)
     except ProviderError as e:
-        raise _http(503, f"Auth provider {str(e)!r} unreachable")
+        headers = {"Retry-After": str(e.retry_after)} if e.retry_after is not None else None
+        raise HTTPException(status_code=503, detail="Auth provider temporarily unavailable", headers=headers)
     if refreshed is not None:
         session = refreshed[0]
         _audit(request, AuditEvent.REFRESH_SUCCESS, provider=session.provider,

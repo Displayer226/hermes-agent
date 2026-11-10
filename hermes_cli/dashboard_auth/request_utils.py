@@ -71,6 +71,7 @@ def scan_session_providers(
     if provider_hint:
         providers.sort(key=lambda provider: provider.name != provider_hint)
     unreachable: Optional[str] = None
+    retry_after: int | None = None
     for provider in providers:
         try:
             result = call(provider)
@@ -85,9 +86,11 @@ def scan_session_providers(
                 on_unreachable(provider)
             if unreachable is None:
                 unreachable = provider.name
+            if e.retry_after is not None:
+                retry_after = max(retry_after or 0, e.retry_after)
             continue
         if result is not None:
             return result
     if unreachable is not None:
-        raise ProviderError(unreachable)
+        raise ProviderError(unreachable, retry_after=retry_after)
     return None

@@ -14,6 +14,8 @@ import math
 import os
 import secrets
 import urllib.parse
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, Optional
 
 import httpx
@@ -201,6 +203,24 @@ def parse_json_body(response: httpx.Response) -> Dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
+def _retry_after_seconds(value: str | None) -> int:
+    if not value:
+        return 60
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                return 60
+            seconds = (date - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return 60
+    if not math.isfinite(seconds):
+        return 60
+    return max(1, math.ceil(seconds))
+
+
 def exchange_token(
     url: str, data: Dict[str, str], *, headers: Optional[Dict[str, str]] = None, bad_request_exc: type[Exception],
     idp: str, endpoint: str, token_key: str, missing_msg: str) -> tuple[str, Dict[str, Any]]:
@@ -221,7 +241,9 @@ def exchange_token(
         error_code = parse_json_body(response).get("error", "invalid_request")
         raise bad_request_exc(f"{idp} rejected token request: {error_code}")
     if response.status_code != 200:
-        raise ProviderError(f"{endpoint} returned {response.status_code}: {response.text[:200]!r}")
+        retry_after = (_retry_after_seconds(response.headers.get("Retry-After"))
+                       if response.status_code in (429, 503) else None)
+        raise ProviderError(f"{endpoint} returned {response.status_code}", retry_after=retry_after)
     payload = parse_json_body(response)
     token = payload.get(token_key)
     if not token or not isinstance(token, str):

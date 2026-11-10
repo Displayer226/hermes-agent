@@ -42,6 +42,10 @@ class LoginStart:
 class ProviderError(Exception):
     """IDP unreachable / transient failure. Middleware -> HTTP 503."""
 
+    def __init__(self, message: str, *, retry_after: int | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 class InvalidCodeError(Exception):
     """OAuth callback ``code``/``state`` failed validation. Middleware -> HTTP 400."""
