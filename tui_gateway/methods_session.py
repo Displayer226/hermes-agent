@@ -432,7 +432,7 @@ def _create_session(rid, params: dict, *, copy_parent_history: bool = False) -> 
             "history": history, "history_lock": threading.Lock(), "history_version": 0, "image_counter": 0,
             "seeded": bool(history),  # gates _persist_branch_seed: only create-time history is unpersisted
             "cwd": _completion_cwd(params), "inflight_turn": None, "last_active": now,
-            "model_override": session_model_override,
+            "model_override": session_model_override, "bridge_context": _bridge_context_from_params(params),
             "composer_override_profile": composer_override_profile,
             "create_reasoning_override": create_reasoning_override,
             "create_service_tier_override": create_service_tier_override,

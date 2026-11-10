@@ -323,6 +323,9 @@ class ComputeHost:
                     session[key] = str(frame[key])
         else:
             session = self._build_server_session(server, frame, sid)
+        if "bridge_context" in frame:
+            # Adopt for a future construction; never mutate a running agent's cached prompt.
+            session["bridge_context"] = dict(frame["bridge_context"] or {})
         if isinstance(frame.get("attached_images"), list):
             session["attached_images"] = list(frame.get("attached_images") or [])
         # A model switch queued on the host side while this session was busy rides
@@ -362,6 +365,7 @@ class ComputeHost:
                 sid, key, session_id=key, model_override=frame.get("model_override"),
                 reasoning_config_override=frame.get("reasoning_config_override"),
                 service_tier_override=frame.get("service_tier_override"),
+                bridge_context=frame.get("bridge_context"),
                 platform_override=frame.get("source"),
                 cwd_override=str(frame.get("cwd") or "") or None,
                 context_cwd_is_launch_artifact=bool(
@@ -407,6 +411,8 @@ class ComputeHost:
                 "transport": self._transport}
         session = server._sessions[sid]
         session["transport"] = self._transport
+        if "bridge_context" in frame:
+            session["bridge_context"] = dict(frame["bridge_context"] or {})
         # The host pipe names no login; the record carries the one the gateway stamped at creation.
         session["auth_user_id"] = frame.get("auth_user_id")
         session["profile_home"] = profile_home or session.get("profile_home")

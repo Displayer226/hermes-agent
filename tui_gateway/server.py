@@ -42,6 +42,7 @@ from tui_gateway.checkpoints import (_load_checkpoints_enabled, _resolve_checkpo
                                      resolve_checkpoints_enabled as _resolve_checkpoints_enabled)  # noqa: F401
 from tui_gateway._env import env_float, env_int
 from tui_gateway.turn_marker import clear_turn_marker, marker_writer_state, read_turn_marker, record_turn_start  # noqa: F401
+from tui_gateway.bridge_context import from_params as _bridge_context_from_params
 from tui_gateway.contracts import registry as _contracts
 # User-facing copy shared with the split method modules (they close over this namespace).
 from tui_gateway.user_messages import (  # noqa: F401
@@ -1027,6 +1028,8 @@ def _deferred_build_agent_kwargs(current: dict, session_db) -> dict:
     stored runtime, or an unroutable provider → this session's picked model/effort/tier, else the default."""
     kw = {"session_db": session_db, "context_cwd_is_launch_artifact": _context_cwd_is_launch_artifact(current),
           "platform_override": _session_source(current), "cwd_override": _session_cwd(current)}
+    if current.get("bridge_context"):
+        kw["bridge_context"] = current["bridge_context"]
     if resume_sid := current.get("resume_session_id"):
         kw["session_id"] = resume_sid
     resume_overrides = current.get("resume_runtime_overrides")
@@ -2547,6 +2550,15 @@ def _resolve_agent_model_runtime(model_override, provider_override) -> tuple[str
         requested_provider = model_override.get("provider") or provider_override or None
         override_base_url = model_override.get("base_url")
         resolve_kwargs = {}
+        if not requested_provider and not any(model_override.get(k) for k in ("base_url", "api_key", "api_mode")):
+            from tui_gateway.model_startup import resolve_model_only
+            route = resolve_model_only(model, _load_cfg())
+            if route:
+                model, requested_provider = route.model, route.provider
+                if route.base_url:
+                    resolve_kwargs["explicit_base_url"] = route.base_url
+                if route.api_key:
+                    resolve_kwargs["explicit_api_key"] = route.api_key
         if str(requested_provider or "").strip().lower() == "custom":
             from hermes_cli.runtime_provider import canonical_custom_identity
             if recovered := canonical_custom_identity(base_url=override_base_url or None, model=model or None):
@@ -2647,7 +2659,7 @@ def _make_agent(
     model_override: dict | str | None = None, provider_override: str | None = None,
     reasoning_config_override: dict | None = None, service_tier_override: str | None = None,
     platform_override: str | None = None, context_cwd_is_launch_artifact: bool | None = None,
-    cwd_override: str | None = None, auth_user_id: str | None = None):
+    cwd_override: str | None = None, auth_user_id: str | None = None, bridge_context: dict | None = None):
     # AC-4 test seam: dead unless armed by the isolated certify harness.
     from tui_gateway.synthetic_turn import maybe_build_synthetic_agent
     synthetic = maybe_build_synthetic_agent(session_id or key, model_override)
@@ -2664,6 +2676,9 @@ def _make_agent(
     from agent.shell_hooks import register_from_config
     register_from_config(cfg)
     system_prompt = _startup_system_prompt(cfg, session_id or key)
+    if bridge_context:
+        from tui_gateway.bridge_context import prompt
+        system_prompt = prompt(system_prompt, bridge_context)
     model, runtime = _resolve_agent_model_runtime(model_override, provider_override)
     fallback_notice = runtime.pop("_fallback_notice", None)
     _pr = _load_provider_routing()

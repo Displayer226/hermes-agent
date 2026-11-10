@@ -65,6 +65,7 @@ def _compute_host_turn_frame(
         "context_cwd_is_launch_artifact": _context_cwd_is_launch_artifact(session),
         "profile_home": session.get("profile_home") or "",
         "model_override": session.get("model_override"),
+        **({"bridge_context": session["bridge_context"]} if "bridge_context" in session else {}),
         # A model switch queued while the session was busy (config.set model ->
         # pending_model_switch) must cross the process boundary — the live agent is in
         # the compute host, and the server-side _apply_pending_model_switch would

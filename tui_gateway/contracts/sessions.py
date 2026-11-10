@@ -127,6 +127,10 @@ class SessionCreateParams(ProfileParams):
     title: str | None = None
     model: str | None = None
     provider: str | None = None
+    system_context: str | None = None
+    persona_context: str | None = None
+    persona_reminder: str | None = None
+    persona_version: str | None = None
     reasoning_effort: str | None = None
     fast: bool | None = None  # presence is the contract: omitted inherits, true pins priority, false pins normal
     service_tier: str | None = None

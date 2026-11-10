@@ -26,6 +26,10 @@ def model_override_conflict(params: dict, build_scope) -> dict | None:
     if not provider:
         with build_scope:
             provider = resolve_requested_provider()
+            from tui_gateway.model_startup import resolve_model_only
+            from tui_gateway.server import _load_cfg
+            if route := resolve_model_only(model, _load_cfg()):
+                model, provider = route.model, route.provider or provider
     return static_model_provider_conflict(model, provider)
 
 

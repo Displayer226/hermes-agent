@@ -550,6 +550,8 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
         # reversion from the per-turn sync.
         if "model_override" not in kwargs and isinstance(session.get("model_override"), dict):
             kwargs["model_override"] = session["model_override"]
+        if "bridge_context" not in kwargs and session.get("bridge_context"):
+            kwargs["bridge_context"] = session["bridge_context"]
         for pin, kwarg in (("create_reasoning_override", "reasoning_config_override"),
                            ("create_service_tier_override", "service_tier_override")):
             if kwarg not in kwargs and session.get(pin) is not None:
@@ -571,6 +573,8 @@ def _rebuild_session_agent(sid: str, session: dict, **kwargs):
         closed_midbuild = bool(session.get("_closing"))
         if not closed_midbuild:
             session.update(agent=agent, config_model_seen=config_model_seen)
+            if "bridge_context" in kwargs:
+                session["bridge_context"] = dict(kwargs["bridge_context"] or {})
             owned = opened or bool(getattr(old_agent, "_owns_session_db", False))
             if owned and _transfer_db_to_agent(agent, session_db):
                 if old_agent is not None:

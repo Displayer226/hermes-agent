@@ -3013,6 +3013,10 @@ export interface SessionCreateParams {
   title?: string | null
   model?: string | null
   provider?: string | null
+  system_context?: string | null
+  persona_context?: string | null
+  persona_reminder?: string | null
+  persona_version?: string | null
   reasoning_effort?: string | null
   fast?: boolean | null
   service_tier?: string | null
